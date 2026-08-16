@@ -26,7 +26,7 @@ class AppPreferences(private val context: Context) {
     }
 
     suspend fun save(settings: AppSettings) {
-        context.dataStore.edit { prefs: MutableMap<Preferences.Key<*>, Any?> ->
+        context.dataStore.edit { prefs ->
             prefs[Keys.workerUrl] = settings.workerUrl.trim().trimEnd('/')
             prefs[Keys.bearerToken] = settings.bearerToken.trim()
             prefs[Keys.modelLane] = settings.modelLane.wireValue

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import org.mistykmedia.insertabot.data.AppSettings
 import org.mistykmedia.insertabot.data.ModelLane
 import org.mistykmedia.insertabot.network.InsertaBotApi
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(padding: PaddingValues) {
     val context = LocalContext.current

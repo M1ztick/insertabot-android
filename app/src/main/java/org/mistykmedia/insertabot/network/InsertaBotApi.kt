@@ -19,7 +19,7 @@ class InsertaBotApi(private val client: OkHttpClient = OkHttpClient()) {
             .build()
         runCatching {
             client.newCall(request).execute().use { response ->
-                val body = response.body.string()
+                val body = response.body?.string() ?: ""
                 if (!response.isSuccessful) return@use WorkerHealth(false, "Worker returned HTTP ${response.code}.")
                 val json = JSONObject(body)
                 WorkerHealth(

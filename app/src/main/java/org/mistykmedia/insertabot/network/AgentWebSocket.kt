@@ -12,7 +12,7 @@ import okhttp3.WebSocketListener
 /**
  * Transport boundary for the Cloudflare Agents ChatAgent connection.
  *
- * `insertabot-cfworker` delegates `/agents/*` requests to `routeAgentRequest`.
+ * `insertabot-cfworker` delegates `/agents/` requests to `routeAgentRequest`.
  * The worker-side agent protocol is not plain MCP, so do not invent production
  * frame names here. Verify the connection URL and frames against the deployed
  * Pages client or the Agents SDK, then implement them in this one class.
