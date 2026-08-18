@@ -13,12 +13,14 @@ class ChatViewModel : ViewModel() {
 
     fun submit(text: String) {
         if (text.isBlank()) return
-        _messages.value += ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, text.trim())
-        _messages.value += ChatMessage(
-            UUID.randomUUID().toString(),
-            ChatRole.SYSTEM,
-            "Chat transport is not connected yet. Configure the Worker in Settings, then finalize the Cloudflare Agents WebSocket protocol in AgentWebSocket.",
-            error = true
+        _messages.value = _messages.value + listOf(
+            ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, text.trim()),
+            ChatMessage(
+                UUID.randomUUID().toString(),
+                ChatRole.SYSTEM,
+                "Chat transport is not connected yet. Configure the Worker in Settings, then finalize the Cloudflare Agents WebSocket protocol in AgentWebSocket.",
+                error = true
+            )
         )
     }
 }

@@ -27,7 +27,9 @@ android {
     buildFeatures { compose = true; buildConfig = true }
 
     packaging {
-        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources {
+            excludes += setOf("/META-INF/AL2.0", "/META-INF/LGPL2.1")
+        }
     }
 }
 
@@ -43,6 +45,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.biometric)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

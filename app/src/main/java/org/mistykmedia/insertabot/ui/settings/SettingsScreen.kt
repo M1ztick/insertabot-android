@@ -15,6 +15,10 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +29,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,12 +49,40 @@ fun SettingsScreen(padding: PaddingValues) {
     var status by remember { mutableStateOf<String?>(null) }
     var checking by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+    // Re-authenticate on every entry to this screen — credentials are visible in plain text fields.
+    var authenticated by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        val authenticators = BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+        val activity = context as? FragmentActivity
+        if (activity != null &&
+            BiometricManager.from(context).canAuthenticate(authenticators) == BiometricManager.BIOMETRIC_SUCCESS
+        ) {
+            BiometricPrompt(
+                activity,
+                ContextCompat.getMainExecutor(context),
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        authenticated = true
+                    }
+                }
+            ).authenticate(
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Settings")
+                    .setSubtitle("Authenticate to view credentials")
+                    .setAllowedAuthenticators(authenticators)
+                    .build()
+            )
+        } else {
+            authenticated = true
+        }
+
         withContext(Dispatchers.IO) {
             prefs.settings.collect { settings = it }
         }
     }
+
+    if (!authenticated) return
 
     Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
