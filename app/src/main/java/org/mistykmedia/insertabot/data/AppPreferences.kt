@@ -14,6 +14,8 @@ class AppPreferences(private val context: Context) {
     private object Keys {
         val workerUrl = stringPreferencesKey("worker_url")
         val bearerToken = stringPreferencesKey("bearer_token")
+        val cfAccessClientId = stringPreferencesKey("cf_access_client_id")
+        val cfAccessClientSecret = stringPreferencesKey("cf_access_client_secret")
         val modelLane = stringPreferencesKey("model_lane")
     }
 
@@ -21,6 +23,8 @@ class AppPreferences(private val context: Context) {
         AppSettings(
             workerUrl = prefs[Keys.workerUrl].orEmpty(),
             bearerToken = prefs[Keys.bearerToken].orEmpty(),
+            cfAccessClientId = prefs[Keys.cfAccessClientId].orEmpty(),
+            cfAccessClientSecret = prefs[Keys.cfAccessClientSecret].orEmpty(),
             modelLane = ModelLane.entries.firstOrNull { it.wireValue == prefs[Keys.modelLane] } ?: ModelLane.AUTO
         )
     }
@@ -29,6 +33,8 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[Keys.workerUrl] = settings.workerUrl.trim().trimEnd('/')
             prefs[Keys.bearerToken] = settings.bearerToken.trim()
+            prefs[Keys.cfAccessClientId] = settings.cfAccessClientId.trim()
+            prefs[Keys.cfAccessClientSecret] = settings.cfAccessClientSecret.trim()
             prefs[Keys.modelLane] = settings.modelLane.wireValue
         }
     }

@@ -9,6 +9,8 @@ enum class ModelLane(val wireValue: String, val label: String) {
 data class AppSettings(
     val workerUrl: String = "",
     val bearerToken: String = "",
+    val cfAccessClientId: String = "",
+    val cfAccessClientSecret: String = "",
     val modelLane: ModelLane = ModelLane.AUTO
 )
 

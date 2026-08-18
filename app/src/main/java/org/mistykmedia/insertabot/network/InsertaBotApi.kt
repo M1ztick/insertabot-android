@@ -8,14 +8,18 @@ import org.json.JSONObject
 import org.mistykmedia.insertabot.data.WorkerHealth
 
 class InsertaBotApi(private val client: OkHttpClient = OkHttpClient()) {
-    suspend fun checkWorker(baseUrl: String, bearerToken: String): WorkerHealth = withContext(Dispatchers.IO) {
+    suspend fun checkWorker(baseUrl: String, bearerToken: String, cfAccessClientId: String = "", cfAccessClientSecret: String = ""): WorkerHealth = withContext(Dispatchers.IO) {
         val normalized = baseUrl.trim().trimEnd('/')
         if (!normalized.startsWith("https://")) {
             return@withContext WorkerHealth(false, "Use an HTTPS Worker URL.")
         }
         val request = Request.Builder()
             .url("$normalized/health")
-            .apply { if (bearerToken.isNotBlank()) header("Authorization", "Bearer $bearerToken") }
+            .apply {
+                if (bearerToken.isNotBlank()) header("Authorization", "Bearer $bearerToken")
+                if (cfAccessClientId.isNotBlank()) header("CF-Access-Client-Id", cfAccessClientId)
+                if (cfAccessClientSecret.isNotBlank()) header("CF-Access-Client-Secret", cfAccessClientSecret)
+            }
             .build()
         runCatching {
             client.newCall(request).execute().use { response ->
