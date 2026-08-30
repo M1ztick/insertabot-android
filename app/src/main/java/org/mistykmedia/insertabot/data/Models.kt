@@ -19,7 +19,12 @@ data class McpServer(
     val name: String,
     val url: String,
     val token: String = "",
-    val connected: Boolean = false
+    val connected: Boolean = false,
+    /** Agents SDK connection state: connecting, authenticating, ready, failed. */
+    val state: String = "",
+    /** Present while [state] is "authenticating" — open it to finish MCP OAuth. */
+    val authUrl: String? = null,
+    val error: String? = null
 )
 
 enum class ChatRole { USER, ASSISTANT, SYSTEM }
