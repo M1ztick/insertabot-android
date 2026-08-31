@@ -11,6 +11,11 @@ import java.util.UUID
 private val Context.dataStore by preferencesDataStore(name = "insertabot_settings")
 
 class AppPreferences(private val context: Context) {
+    private companion object {
+        /** Canonical UUID — the shape `AgentWebSocket` puts in the request path. */
+        val INSTANCE_ID = Regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+    }
+
     private object Keys {
         val workerUrl = stringPreferencesKey("worker_url")
         val bearerToken = stringPreferencesKey("bearer_token")
@@ -37,7 +42,13 @@ class AppPreferences(private val context: Context) {
      */
     suspend fun ensureInstanceId(): String =
         context.dataStore.edit { prefs ->
-            if (prefs[Keys.instanceId].isNullOrBlank()) prefs[Keys.instanceId] = UUID.randomUUID().toString()
+            // Repair a missing or corrupt id here, where the replacement is
+            // persisted — regenerating it per connect would strand the thread
+            // on a new Durable Object every time.
+            val stored = prefs[Keys.instanceId]
+            if (stored == null || !INSTANCE_ID.matches(stored)) {
+                prefs[Keys.instanceId] = UUID.randomUUID().toString()
+            }
         }[Keys.instanceId].orEmpty()
 
     /** Rotates the instance id, which starts a fresh conversation on the Worker. */

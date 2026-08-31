@@ -344,6 +344,8 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
         val scheme = if (normalized.startsWith("http://")) "ws://" else "wss://"
         val host = normalized.removePrefix("https://").removePrefix("http://")
         val query = if (key.isBlank()) "" else "?ib_key=" + URLEncoder.encode(key, "UTF-8")
+        // Percent-encoding is what keeps a stray separator from escaping the
+        // path segment; the id's shape is enforced where it is stored.
         val instance = URLEncoder.encode(instanceId, "UTF-8")
         return "$scheme$host/${AgentFrames.PATH_PREFIX}/${AgentFrames.AGENT_NAME}/$instance$query"
     }

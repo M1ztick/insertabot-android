@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The only data this app persists is the Worker URL, the bearer token, the
+  Cloudflare Access secret, and the conversation id — none of it should leave
+  the device. Cloud backup is off entirely (allowBackup="false"); these rules
+  additionally keep the credentials out of device-to-device transfer on
+  Android 12+, which allowBackup does not cover.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="datastore" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="datastore" />
+    </device-transfer>
+</data-extraction-rules>
