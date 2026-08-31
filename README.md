@@ -75,7 +75,7 @@ The instance id is generated once and stored in DataStore, so a conversation sur
 
 **Not done yet**
 
-- `ServersScreen` is still a stub. `AgentWebSocket.addServer` / `removeServer` exist and `cf_agent_mcp_servers` already decodes into `McpServer`, but the screen is not wired to a session — that needs the view model hoisted so chat and servers share one connection.
+- `ServersScreen` is still a stub. Inbound `cf_agent_mcp_servers` already decodes into `McpServer`, and `AgentWebSocket.callRpc` covers `addServer` / `removeServer`, but the screen is not wired to a session — that needs the view model hoisted so chat and servers share one connection.
 
 ## F-Droid
 

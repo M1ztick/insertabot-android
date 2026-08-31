@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
+import android.util.Log
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
@@ -53,6 +54,10 @@ object AgentFrames {
  */
 class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
 
+    private companion object {
+        const val TAG = "AgentWebSocket"
+    }
+
     sealed interface Event {
         data object Open : Event
         data object Closed : Event
@@ -72,8 +77,6 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
         data class McpServers(val servers: List<McpServer>) : Event
         data class RpcResult(val id: String, val result: Result<Any?>) : Event
 
-        /** A frame this build does not model, kept for logging. */
-        data class Unhandled(val type: String, val raw: String) : Event
     }
 
     @Volatile
@@ -190,12 +193,6 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
     suspend fun setModelLane(lane: ModelLane): Result<Any?> =
         callRpc("setModelLane", listOf(lane.wireValue))
 
-    suspend fun addServer(name: String, url: String, token: String = ""): Result<Any?> =
-        callRpc("addServer", listOf(name, url, token.ifBlank { null }))
-
-    suspend fun removeServer(nameOrId: String): Result<Any?> =
-        callRpc("removeServer", listOf(nameOrId))
-
     // ── Decoding ─────────────────────────────────────────────────────────────
 
     /** One inbound frame may produce several events (a chunk plus a terminal `done`). */
@@ -207,7 +204,8 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             AgentFrames.STATE -> decodeState(frame)
             AgentFrames.MCP_SERVERS -> listOf(Event.McpServers(decodeMcpServers(frame.optJSONObject("mcp"))))
             AgentFrames.RPC -> listOf(decodeRpc(frame))
-            else -> listOf(Event.Unhandled(type, text))
+            // Worth a log: an upstream rename lands here rather than failing loudly.
+            else -> emptyList<Event>().also { Log.w(TAG, "Unhandled agent frame: $type") }
         }
     }
 

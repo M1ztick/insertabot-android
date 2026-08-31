@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.AppPreferences
 import org.mistykmedia.insertabot.data.ChatMessage
 import org.mistykmedia.insertabot.data.ChatRole
-import org.mistykmedia.insertabot.data.ModelLane
 import org.mistykmedia.insertabot.network.AgentWebSocket
 import java.util.UUID
 
@@ -76,7 +75,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // The lane is agent state, not a connection parameter: push it over
             // RPC instead of reopening the socket.
             prefs.settings.map { it.modelLane }.distinctUntilChanged().collect { lane ->
-                if (transport.isOpen) pushModelLane(lane)
+                if (transport.isOpen) transport.setModelLane(lane)
             }
         }
     }
@@ -177,7 +176,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _connection.value = Connection.Connected
                 // Re-assert the saved lane: agent state lives in the Durable
                 // Object and may have hibernated or been reset.
-                pushModelLane(prefs.settings.first().modelLane)
+                transport.setModelLane(prefs.settings.first().modelLane)
             }
 
             is AgentWebSocket.Event.Closed -> _connection.value = Connection.Disconnected(null)
@@ -210,8 +209,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is AgentWebSocket.Event.ToolCall,
             is AgentWebSocket.Event.State,
             is AgentWebSocket.Event.McpServers,
-            is AgentWebSocket.Event.RpcResult,
-            is AgentWebSocket.Event.Unhandled -> Unit
+            is AgentWebSocket.Event.RpcResult -> Unit
         }
     }
 
@@ -235,10 +233,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             streamingId = null
         }
         _busy.value = false
-    }
-
-    private suspend fun pushModelLane(lane: ModelLane) {
-        transport.callRpc("setModelLane", listOf(lane.wireValue))
     }
 
     override fun onCleared() {

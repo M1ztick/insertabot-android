@@ -1,7 +1,6 @@
 package org.mistykmedia.insertabot.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -32,12 +31,10 @@ class AppPreferences(private val context: Context) {
     }
 
     /**
-     * The Durable Object name for the agent connection — the conversation
-     * identity. Generated once and kept so a thread survives app restarts.
+     * Returns the Durable Object name for the agent connection — the
+     * conversation identity — generating one atomically on first use so a
+     * thread survives app restarts.
      */
-    val instanceId: Flow<String> = context.dataStore.data.map { prefs -> prefs[Keys.instanceId].orEmpty() }
-
-    /** Returns the stored instance id, generating one atomically on first use. */
     suspend fun ensureInstanceId(): String =
         context.dataStore.edit { prefs ->
             if (prefs[Keys.instanceId].isNullOrBlank()) prefs[Keys.instanceId] = UUID.randomUUID().toString()
