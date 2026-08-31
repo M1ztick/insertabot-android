@@ -2,7 +2,7 @@
 
 A native Android companion app for [InsertaBot](https://github.com/M1ztick/insertabot-cfworker), built with Kotlin and Jetpack Compose.
 
-> Status: initial scaffold. The UI, local preferences, Worker capability probe, and the Cloudflare Agents WebSocket transport are in place. The transport is not yet wired into the chat UI.
+> Status: early. Chat runs end to end against a deployed Worker — the Cloudflare Agents WebSocket transport, streaming replies, and persistent conversation identity are in place. MCP server management is still stubbed.
 
 ## Goals
 
@@ -67,10 +67,15 @@ wss://<worker>/agents/chat-agent/<instanceId>[?ib_key=<token>]
 - The deployed Worker pins `agents ^0.20.1` and `@cloudflare/ai-chat ^0.10.2`. Upstream `@cloudflare/ai-chat` has already renamed these frames (`chat-request`, `messages`, `cancel`, `tool-approval`), so a Worker dependency bump will require updating `AgentFrames`.
 - The Worker does not currently authenticate the WebSocket upgrade. The app sends the configured token both as `?ib_key=` (matching the PWA) and as an `Authorization: Bearer` header, and forwards the Cloudflare Access service headers, but nothing server-side reads the first two yet.
 
+**Client behaviour**
+
+`ChatViewModel` opens the socket whenever a Worker URL is saved, reconnects with capped exponential backoff (5 attempts, 1s doubling to 30s), and surfaces `Connecting` / `Connected` / `Disconnected` to the chat screen. Replies stream token by token into a placeholder assistant message. The saved model lane is re-asserted over RPC on every connect, since agent state lives in the Durable Object and may have hibernated.
+
+The instance id is generated once and stored in DataStore, so a conversation survives app restarts; **New chat** rotates it, which is a new Durable Object and a fresh thread.
+
 **Not done yet**
 
-- `ChatViewModel` still uses a placeholder and does not open the transport.
-- The instance id is not persisted, so conversations cannot be resumed across launches.
+- `ServersScreen` is still a stub. `AgentWebSocket.addServer` / `removeServer` exist and `cf_agent_mcp_servers` already decodes into `McpServer`, but the screen is not wired to a session — that needs the view model hoisted so chat and servers share one connection.
 
 ## F-Droid
 
