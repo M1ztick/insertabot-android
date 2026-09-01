@@ -25,8 +25,10 @@ android {
         applicationId = "org.mistykmedia.insertabot"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Every build handed to a tester needs a higher versionCode, or it
+        // will not install over the one already on their device.
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     signingConfigs {
