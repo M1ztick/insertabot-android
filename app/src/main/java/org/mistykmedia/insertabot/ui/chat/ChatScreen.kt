@@ -63,6 +63,10 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
                         Text(message.role.name.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelMedium)
                         if (message.text.isBlank() && message.streaming) {
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else if (message.role == ChatRole.ASSISTANT && !message.error) {
+                            // Only the model answers in Markdown. What the user
+                            // typed is shown as typed, and errors stay plain.
+                            MarkdownText(message.text, MaterialTheme.colorScheme.onSurface)
                         } else {
                             Text(message.text, color = if (message.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                         }
