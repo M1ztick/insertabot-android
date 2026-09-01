@@ -224,8 +224,13 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
                     "start" ->
                         events += Event.StreamStart(requestId, chunk.optString("messageId").ifBlank { requestId })
                     "text-delta" -> {
-                        // `delta` is v5; `textDelta` is the older field name.
-                        val delta = chunk.optString("delta").ifBlank { chunk.optString("textDelta") }
+                        // `delta` is v5; `textDelta` is the older field name. Select
+                        // on key presence, not blankness: a delta that is exactly
+                        // "\n" is blank, and falling back on it drops the newline
+                        // entirely, silently running paragraphs together.
+                        val delta =
+                            if (chunk.has("delta")) chunk.optString("delta")
+                            else chunk.optString("textDelta")
                         if (delta.isNotEmpty()) events += Event.TextDelta(requestId, delta)
                     }
                     "tool-input-start", "tool-input-available", "tool-call" ->
