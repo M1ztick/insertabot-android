@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.AppPreferences
 import org.mistykmedia.insertabot.data.ChatMessage
 import org.mistykmedia.insertabot.data.ChatRole
+import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.network.AgentWebSocket
 import java.util.UUID
 
@@ -53,6 +54,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _connection = MutableStateFlow<Connection>(Connection.Unconfigured)
     val connection = _connection.asStateFlow()
+
+    /**
+     * MCP servers as last reported by the agent. The agent is authoritative:
+     * this is replaced wholesale on every `cf_agent_mcp_servers` frame rather
+     * than edited locally, so a failed connection upstream is visible here.
+     */
+    private val _mcpServers = MutableStateFlow<List<McpServer>>(emptyList())
+    val mcpServers = _mcpServers.asStateFlow()
+
+    /** In flight while an addServer/removeServer RPC is outstanding. */
+    private val _serverBusy = MutableStateFlow(false)
+    val serverBusy = _serverBusy.asStateFlow()
+
+    /** Failure text from the last server RPC, cleared when the next one starts. */
+    private val _serverError = MutableStateFlow<String?>(null)
+    val serverError = _serverError.asStateFlow()
 
     /** True from sending a turn until the agent finishes streaming its reply. */
     private val _busy = MutableStateFlow(false)
@@ -120,6 +137,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         endpoint = target
         session?.cancel()
         _messages.value = emptyList()
+        // Servers belong to the agent we were talking to; a new endpoint
+        // reports its own set once connected.
+        _mcpServers.value = emptyList()
         streamingId = null
         _busy.value = false
 
@@ -206,10 +226,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is AgentWebSocket.Event.History ->
                 if (streamingId == null && event.messages.isNotEmpty()) _messages.value = event.messages
 
+            is AgentWebSocket.Event.McpServers -> _mcpServers.value = event.servers
+
             is AgentWebSocket.Event.ToolCall,
             is AgentWebSocket.Event.State,
-            is AgentWebSocket.Event.McpServers,
             is AgentWebSocket.Event.RpcResult -> Unit
+        }
+    }
+
+    /**
+     * Attach an MCP server. The agent pushes a fresh `cf_agent_mcp_servers`
+     * frame once it has connected (or failed), so nothing is added optimistically
+     * here — the list updates when the agent says so.
+     */
+    fun addServer(name: String, url: String, token: String) {
+        viewModelScope.launch {
+            _serverBusy.value = true
+            _serverError.value = null
+            val result = transport.callRpc("addServer", listOf(name, url, token.ifBlank { null }))
+            _serverError.value = result.exceptionOrNull()?.message
+            _serverBusy.value = false
+        }
+    }
+
+    /** Detach an MCP server by friendly name or id. */
+    fun removeServer(nameOrId: String) {
+        viewModelScope.launch {
+            _serverBusy.value = true
+            _serverError.value = null
+            val result = transport.callRpc("removeServer", listOf(nameOrId))
+            _serverError.value = result.exceptionOrNull()?.message
+            _serverBusy.value = false
         }
     }
 
