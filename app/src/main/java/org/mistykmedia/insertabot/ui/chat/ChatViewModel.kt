@@ -1,6 +1,8 @@
 package org.mistykmedia.insertabot.ui.chat
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -48,6 +50,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = AppPreferences(application)
     private val transport = AgentWebSocket()
+    private val connectivity = application.getSystemService(ConnectivityManager::class.java)
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages = _messages.asStateFlow()
@@ -81,6 +84,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
 
+    /**
+     * Resume once the network comes back.
+     *
+     * Doze and network handoffs fail DNS while the radio is still returning, so
+     * the retry budget is spent against a dead link and the socket stays down
+     * for good — the reader comes back to an app that quietly stopped working
+     * and has to find the Reconnect link. Retrying on the signal that actually
+     * matters makes that recovery invisible instead.
+     */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            viewModelScope.launch {
+                if (_connection.value is Connection.Disconnected) endpoint?.let { open(it) }
+            }
+        }
+    }
+
     init {
         viewModelScope.launch {
             prefs.settings
@@ -95,7 +115,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (transport.isOpen) transport.setModelLane(lane)
             }
         }
+        runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
     }
+
 
     fun submit(text: String) {
         val trimmed = text.trim()
@@ -283,6 +305,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
         session?.cancel()
         transport.disconnect()
         super.onCleared()
