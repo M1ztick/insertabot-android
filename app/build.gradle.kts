@@ -1,3 +1,15 @@
+import java.io.FileInputStream
+import java.util.Properties
+
+// Release signing comes from key.properties, which is gitignored and never
+// committed. Absent it, assembleRelease still builds but stays unsigned —
+// deliberately, so CI and fresh clones do not fail on a missing key.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) FileInputStream(keystorePropertiesFile).use { load(it) }
+}
+val hasReleaseSigning = keystorePropertiesFile.exists()
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -15,6 +27,29 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            // Testers carry a live Cloudflare Access service token in DataStore.
+            // A debuggable build hands that token to anyone with USB access via
+            // run-as, so distribution builds must be release-signed.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
 
     compileOptions {
