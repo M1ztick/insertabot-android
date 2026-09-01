@@ -250,6 +250,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             is AgentWebSocket.Event.McpServers -> _mcpServers.value = event.servers
 
+            // A reply that was in flight when the socket dropped is being
+            // replayed. Re-enter the streaming state so the chunks land in a
+            // message instead of arriving with nothing to append to.
+            is AgentWebSocket.Event.StreamResuming -> {
+                _busy.value = true
+                startStream(event.requestId)
+            }
+
             is AgentWebSocket.Event.ToolCall,
             is AgentWebSocket.Event.State,
             is AgentWebSocket.Event.RpcResult -> Unit

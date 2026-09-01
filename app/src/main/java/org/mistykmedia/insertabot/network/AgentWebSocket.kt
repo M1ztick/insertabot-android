@@ -43,6 +43,17 @@ object AgentFrames {
     const val STATE = "cf_agent_state"
     const val MCP_SERVERS = "cf_agent_mcp_servers"
     const val RPC = "rpc"
+
+    /** Server names the agent instance this socket is bound to on connect. */
+    const val IDENTITY = "cf_agent_identity"
+
+    /**
+     * Server offers to replay a stream that was interrupted — but sends nothing
+     * until the client acknowledges. [STREAM_RESUME_ACK] is what requests the
+     * chunks; without it the rest of the reply is simply never delivered.
+     */
+    const val STREAM_RESUMING = "cf_agent_stream_resuming"
+    const val STREAM_RESUME_ACK = "cf_agent_stream_resume_ack"
 }
 
 /**
@@ -70,6 +81,9 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
         data class ToolFailed(val requestId: String, val toolName: String, val error: String) : Event
         data class StreamError(val requestId: String, val error: String) : Event
         data class StreamFinish(val requestId: String) : Event
+
+        /** An interrupted stream is being replayed for [requestId]. */
+        data class StreamResuming(val requestId: String) : Event
 
         /** Full history replace — the agent is authoritative, not the client. */
         data class History(val messages: List<ChatMessage>) : Event
@@ -204,6 +218,14 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             AgentFrames.STATE -> decodeState(frame)
             AgentFrames.MCP_SERVERS -> listOf(Event.McpServers(decodeMcpServers(frame.optJSONObject("mcp"))))
             AgentFrames.RPC -> listOf(decodeRpc(frame))
+            AgentFrames.IDENTITY -> {
+                // Worth a line: `name` is the server-scoped Durable Object this
+                // socket resolved to, which is the only place the client can see
+                // that its conversation id was namespaced to the caller.
+                Log.i(TAG, "Agent identity: ${frame.optString("agent")}/${frame.optString("name")}")
+                emptyList()
+            }
+            AgentFrames.STREAM_RESUMING -> resumeStream(frame)
             // Worth a log: an upstream rename lands here rather than failing loudly.
             else -> emptyList<Event>().also { Log.w(TAG, "Unhandled agent frame: $type") }
         }
@@ -255,6 +277,27 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
 
         if (frame.optBoolean("done")) events += Event.StreamFinish(requestId)
         return events
+    }
+
+    /**
+     * Acknowledge a resumable stream so the server replays it.
+     *
+     * The acknowledgement is sent here rather than from the view model because
+     * it is a transport obligation, not a UI decision: the replay does not start
+     * until it lands, and routing it through a suspend handler only delays it.
+     */
+    private fun resumeStream(frame: JSONObject): List<Event> {
+        val requestId = frame.optString("id")
+        if (requestId.isBlank()) return emptyList()
+        val ws = socket ?: return emptyList()
+        val ack = JSONObject()
+            .put("type", AgentFrames.STREAM_RESUME_ACK)
+            .put("id", requestId)
+        if (!ws.send(ack.toString())) {
+            Log.w(TAG, "Failed to acknowledge resumable stream $requestId")
+            return emptyList()
+        }
+        return listOf(Event.StreamResuming(requestId))
     }
 
     private fun decodeState(frame: JSONObject): List<Event> {
