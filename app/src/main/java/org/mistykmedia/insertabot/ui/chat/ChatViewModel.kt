@@ -79,7 +79,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
 
-    """
+    /**
      * A base64 data URI currently staged to be sent with the next message.
      * Cleared after a successful send so one image is tied to one turn.
      */
@@ -92,7 +92,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
 
-    """
+    /**
      * Resume once the network comes back.
      *
      * Doze and network handoffs fail DNS while the radio is still returning, so
@@ -126,12 +126,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
     }
 
-    """ Stage a base64 image data URI to be sent with the next message. """
+    /** Stage a base64 image data URI to be sent with the next message. */
     fun attachImage(base64DataUri: String) {
         _pendingImage.value = base64DataUri
     }
 
-    """ Discard the staged image without sending it. """
+    /** Discard the staged image without sending it. */
     fun clearPendingImage() {
         _pendingImage.value = null
     }
@@ -306,11 +306,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    """
+    /**
      * Attach an MCP server. The agent pushes a fresh `cf_agent_mcp_servers`
      * frame once it has connected (or failed), so nothing is added optimistically
      * here — the list updates when the agent says so.
-     """
+     */
     fun addServer(name: String, url: String, token: String) {
         viewModelScope.launch {
             _serverBusy.value = true
@@ -341,7 +341,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun appendToStream(delta: String) {
         val id = streamingId ?: return
         _messages.value = _messages.value.map {
-            if (it.id == id) it.copy(text = it.text + delta) else it
+            if (it.id == id) {
+                // contentParts is what goes on the wire, and the whole history
+                // is replayed every turn. Growing `text` alone would send each
+                // finished assistant turn back as an empty text part.
+                val grown = it.text + delta
+                it.copy(text = grown, contentParts = listOf(ContentPart.Text(grown)))
+            } else {
+                it
+            }
         }
     }
 

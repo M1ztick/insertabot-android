@@ -321,6 +321,23 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
         return Event.RpcResult(id, result)
     }
 
+    private fun decodeMcpServers(mcp: JSONObject?): List<McpServer> {
+        val servers = mcp?.optJSONObject("servers") ?: return emptyList()
+        return servers.keys().asSequence().mapNotNull { id ->
+            val server = servers.optJSONObject(id) ?: return@mapNotNull null
+            val state = server.optString("state")
+            McpServer(
+                id = id,
+                name = server.optString("name").ifBlank { id },
+                url = server.optString("server_url"),
+                connected = state == "ready",
+                state = state,
+                authUrl = server.optString("auth_url").ifBlank { null },
+                error = server.optString("error").ifBlank { null }
+            )
+        }.toList()
+    }
+
     private fun decodeHistory(messages: JSONArray?): List<ChatMessage> {
         if (messages == null) return emptyList()
         return (0 until messages.length()).mapNotNull { index ->
@@ -330,11 +347,16 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
                 "assistant" -> ChatRole.ASSISTANT
                 else -> ChatRole.SYSTEM
             }
+            val text = messageText(message)
             ChatMessage(
                 id = message.optString("id").ifBlank { UUID.randomUUID().toString() },
                 role = role,
-                text = messageText(message),
+                text = text,
+                // Parts we do not model (reasoning, tool calls) decode to nothing.
+                // Falling back to the flattened text keeps the turn from being
+                // replayed to the model as an empty message.
                 contentParts = decodeMessageParts(message.optJSONArray("parts"))
+                    .ifEmpty { if (text.isBlank()) emptyList() else listOf(ContentPart.Text(text)) }
             )
         }
     }
