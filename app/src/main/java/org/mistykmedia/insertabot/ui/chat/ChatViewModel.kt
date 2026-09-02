@@ -21,6 +21,7 @@ import org.mistykmedia.insertabot.data.ChatRole
 import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.network.AgentWebSocket
+import org.mistykmedia.insertabot.ui.JPEG_MEDIA_TYPE
 import java.util.UUID
 
 /** Connection parameters that require reopening the socket when they change. */
@@ -140,12 +141,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = text.trim()
         if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return
 
+        // Order mirrors public/index.js in the Worker repo: text first, then files.
         val parts = buildList {
-            _pendingImage.value?.let { uri ->
-                add(ContentPart.ImageUrl(ContentPart.ImageUrlData(uri)))
-            }
             if (trimmed.isNotEmpty()) {
                 add(ContentPart.Text(trimmed))
+            }
+            _pendingImage.value?.let { uri ->
+                add(ContentPart.File(url = uri, mediaType = JPEG_MEDIA_TYPE, filename = "image.jpg"))
             }
         }
 

@@ -11,6 +11,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
+/** Media type of everything [uriToJpegBase64] emits; goes on the wire as `mediaType`. */
+const val JPEG_MEDIA_TYPE = "image/jpeg"
+
 private const val MAX_IMAGE_DIMENSION = 1024
 private const val JPEG_QUALITY = 85
 private const val MAX_IMAGE_BYTES = 2_000_000

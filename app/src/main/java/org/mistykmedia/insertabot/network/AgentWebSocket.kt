@@ -380,9 +380,13 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             val part = parts.optJSONObject(index) ?: return@mapNotNull null
             when (part.optString("type")) {
                 "text" -> ContentPart.Text(part.optString("text"))
-                "image_url" -> {
-                    val imageUrl = part.optJSONObject("image_url") ?: return@mapNotNull null
-                    ContentPart.ImageUrl(ContentPart.ImageUrlData(imageUrl.optString("url")))
+                "file" -> {
+                    val url = part.optString("url")
+                    if (url.isBlank()) null else ContentPart.File(
+                        url = url,
+                        mediaType = part.optString("mediaType").ifBlank { "application/octet-stream" },
+                        filename = part.optString("filename").ifBlank { null }
+                    )
                 }
                 else -> null
             }
@@ -401,19 +405,28 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
                 is ContentPart.Text -> {
                     parts.put(JSONObject().put("type", "text").put("text", part.text))
                 }
-                is ContentPart.ImageUrl -> {
+                is ContentPart.File -> {
                     parts.put(
                         JSONObject()
-                            .put("type", "image_url")
-                            .put("image_url", JSONObject().put("url", part.image_url.url))
+                            .put("type", "file")
+                            .put("mediaType", part.mediaType)
+                            .put("url", part.url)
+                            .apply { part.filename?.let { put("filename", it) } }
                     )
                 }
             }
         }
+        // `content` is the v4 field and must not carry UI decoration: ChatMessage.text
+        // holds the "[Image]" prefix shown in the list, which would otherwise reach the
+        // model as literal text. The PWA sends a bare space when a turn is image-only.
+        val content = message.contentParts
+            .filterIsInstance<ContentPart.Text>()
+            .joinToString("") { it.text }
+            .ifBlank { " " }
         return JSONObject()
             .put("id", message.id)
             .put("role", role)
-            .put("content", message.text)
+            .put("content", content)
             .put("parts", parts)
             .put("createdAt", Instant.now().toString())
     }

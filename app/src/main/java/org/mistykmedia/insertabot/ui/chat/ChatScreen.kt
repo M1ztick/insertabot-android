@@ -44,6 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.ChatRole
+import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.ui.uriToJpegBase64
 
 @Composable
@@ -166,9 +167,10 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
 }
 
 @Composable
-private fun RenderUserImages(parts: List<org.mistykmedia.insertabot.data.ContentPart>) {
-    val imageUrls = parts.filterIsInstance<org.mistykmedia.insertabot.data.ContentPart.ImageUrl>()
-        .map { it.image_url.url }
+private fun RenderUserImages(parts: List<ContentPart>) {
+    val imageUrls = parts.filterIsInstance<ContentPart.File>()
+        .filter { it.mediaType.startsWith("image/") }
+        .map { it.url }
     if (imageUrls.isEmpty()) return
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -46,12 +46,22 @@ sealed interface ContentPart {
     @SerialName("text")
     data class Text(val text: String) : ContentPart
 
+    /**
+     * An AI SDK v5 `file` part — the only image shape
+     * `convertToModelMessages()` understands.
+     *
+     * An OpenAI-style `image_url` part is *not* a UIMessage part type: the SDK
+     * drops it without complaint and the model then answers as though no image
+     * were sent. Keep this identical to what `public/index.js` in
+     * `insertabot-cfworker` pushes.
+     */
     @Serializable
-    @SerialName("image_url")
-    data class ImageUrl(val image_url: ImageUrlData) : ContentPart
-
-    @Serializable
-    data class ImageUrlData(val url: String)
+    @SerialName("file")
+    data class File(
+        val url: String,
+        val mediaType: String,
+        val filename: String? = null
+    ) : ContentPart
 }
 
 data class ChatMessage(
