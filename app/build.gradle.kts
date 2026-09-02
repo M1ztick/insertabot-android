@@ -27,8 +27,8 @@ android {
         targetSdk = 35
         // Every build handed to a tester needs a higher versionCode, or it
         // will not install over the one already on their device.
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     signingConfigs {
