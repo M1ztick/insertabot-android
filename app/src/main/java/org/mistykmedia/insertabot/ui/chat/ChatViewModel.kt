@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.AppPreferences
 import org.mistykmedia.insertabot.data.ChatMessage
 import org.mistykmedia.insertabot.data.ChatRole
+import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.network.AgentWebSocket
 import java.util.UUID
@@ -78,13 +79,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
 
+    """
+     * A base64 data URI currently staged to be sent with the next message.
+     * Cleared after a successful send so one image is tied to one turn.
+     */
+    private val _pendingImage = MutableStateFlow<String?>(null)
+    val pendingImage = _pendingImage.asStateFlow()
+
     private var session: Job? = null
     private var endpoint: Endpoint? = null
 
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
 
-    /**
+    """
      * Resume once the network comes back.
      *
      * Doze and network handoffs fail DNS while the radio is still returning, so
@@ -118,14 +126,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
     }
 
+    """ Stage a base64 image data URI to be sent with the next message. """
+    fun attachImage(base64DataUri: String) {
+        _pendingImage.value = base64DataUri
+    }
+
+    """ Discard the staged image without sending it. """
+    fun clearPendingImage() {
+        _pendingImage.value = null
+    }
 
     fun submit(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _busy.value) return
+        if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return
 
-        val user = ChatMessage(UUID.randomUUID().toString(), ChatRole.USER, trimmed)
+        val parts = buildList {
+            _pendingImage.value?.let { uri ->
+                add(ContentPart.ImageUrl(ContentPart.ImageUrlData(uri)))
+            }
+            if (trimmed.isNotEmpty()) {
+                add(ContentPart.Text(trimmed))
+            }
+        }
+
+        val displayText = buildString {
+            if (_pendingImage.value != null) append("[Image]")
+            if (trimmed.isNotEmpty()) {
+                if (isNotEmpty()) append(" ")
+                append(trimmed)
+            }
+        }
+
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = ChatRole.USER,
+            text = displayText,
+            contentParts = parts
+        )
         val history = _messages.value + user
         _messages.value = history
+        _pendingImage.value = null
 
         if (transport.sendChat(history) == null) {
             _messages.value = _messages.value + ChatMessage(
@@ -151,6 +191,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _messages.value = emptyList()
             streamingId = null
             _busy.value = false
+            _pendingImage.value = null
             endpoint?.let { open(it) }
         }
     }
@@ -164,6 +205,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _mcpServers.value = emptyList()
         streamingId = null
         _busy.value = false
+        _pendingImage.value = null
 
         if (target.workerUrl.isBlank()) {
             _connection.value = Connection.Unconfigured
@@ -232,7 +274,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             is AgentWebSocket.Event.ToolFailed -> {
                 if (streamingId == null) startStream(event.requestId)
-                appendToStream("\n\n_[Tool `${event.toolName}` failed: ${event.error}]_")
+                appendToStream("\n\n_[Tool ${event.toolName} failed: ${event.error}]_")
                 finishStream()
             }
 
@@ -264,11 +306,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
+    """
      * Attach an MCP server. The agent pushes a fresh `cf_agent_mcp_servers`
      * frame once it has connected (or failed), so nothing is added optimistically
      * here — the list updates when the agent says so.
-     */
+     """
     fun addServer(name: String, url: String, token: String) {
         viewModelScope.launch {
             _serverBusy.value = true
