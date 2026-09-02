@@ -15,6 +15,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.mistykmedia.insertabot.data.ChatMessage
 import org.mistykmedia.insertabot.data.ChatRole
+import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.data.ModelLane
 import java.net.URLEncoder
@@ -332,36 +333,38 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             ChatMessage(
                 id = message.optString("id").ifBlank { UUID.randomUUID().toString() },
                 role = role,
-                text = messageText(message)
+                text = messageText(message),
+                contentParts = decodeMessageParts(message.optJSONArray("parts"))
             )
         }
     }
 
     /** v5 `UIMessage`s carry text in `parts`; `content` is the v4 fallback. */
     private fun messageText(message: JSONObject): String {
-        val parts = message.optJSONArray("parts") ?: return message.optString("content")
-        val text = (0 until parts.length())
-            .mapNotNull { parts.optJSONObject(it) }
-            .filter { it.optString("type") == "text" }
-            .joinToString("") { it.optString("text") }
-        return text.ifBlank { message.optString("content") }
+        val parts = message.optJSONArray("parts")
+        if (parts != null) {
+            val text = (0 until parts.length())
+                .mapNotNull { parts.optJSONObject(it) }
+                .filter { it.optString("type") == "text" }
+                .joinToString("") { it.optString("text") }
+            if (text.isNotBlank()) return text
+        }
+        return message.optString("content")
     }
 
-    private fun decodeMcpServers(mcp: JSONObject?): List<McpServer> {
-        val servers = mcp?.optJSONObject("servers") ?: return emptyList()
-        return servers.keys().asSequence().mapNotNull { id ->
-            val server = servers.optJSONObject(id) ?: return@mapNotNull null
-            val state = server.optString("state")
-            McpServer(
-                id = id,
-                name = server.optString("name").ifBlank { id },
-                url = server.optString("server_url"),
-                connected = state == "ready",
-                state = state,
-                authUrl = server.optString("auth_url").ifBlank { null },
-                error = server.optString("error").ifBlank { null }
-            )
-        }.toList()
+    private fun decodeMessageParts(parts: JSONArray?): List<ContentPart> {
+        if (parts == null) return emptyList()
+        return (0 until parts.length()).mapNotNull { index ->
+            val part = parts.optJSONObject(index) ?: return@mapNotNull null
+            when (part.optString("type")) {
+                "text" -> ContentPart.Text(part.optString("text"))
+                "image_url" -> {
+                    val imageUrl = part.optJSONObject("image_url") ?: return@mapNotNull null
+                    ContentPart.ImageUrl(ContentPart.ImageUrlData(imageUrl.optString("url")))
+                }
+                else -> null
+            }
+        }
     }
 
     private fun uiMessage(message: ChatMessage): JSONObject {
@@ -370,7 +373,21 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             ChatRole.ASSISTANT -> "assistant"
             ChatRole.SYSTEM -> "system"
         }
-        val parts = JSONArray().put(JSONObject().put("type", "text").put("text", message.text))
+        val parts = JSONArray()
+        message.contentParts.forEach { part ->
+            when (part) {
+                is ContentPart.Text -> {
+                    parts.put(JSONObject().put("type", "text").put("text", part.text))
+                }
+                is ContentPart.ImageUrl -> {
+                    parts.put(
+                        JSONObject()
+                            .put("type", "image_url")
+                            .put("image_url", JSONObject().put("url", part.image_url.url))
+                    )
+                }
+            }
+        }
         return JSONObject()
             .put("id", message.id)
             .put("role", role)
