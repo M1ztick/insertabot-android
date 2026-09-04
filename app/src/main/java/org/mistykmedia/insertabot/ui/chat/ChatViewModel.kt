@@ -93,6 +93,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
 
+    /** Id of the turn in flight — what a cancel has to be addressed to. */
+    private var activeRequestId: String? = null
+
+    /**
+     * The turn the reader stopped. Its frames are dropped from here on: chunks
+     * already in flight when the cancel lands would otherwise keep appending to
+     * a message that has been closed off, and a resume offer for it would put
+     * the composer back into busy after the socket blips.
+     */
+    private var cancelledRequestId: String? = null
+
     /**
      * Resume once the network comes back.
      *
@@ -169,7 +180,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = history
         _pendingImage.value = null
 
-        if (transport.sendChat(history) == null) {
+        val requestId = transport.sendChat(history)
+        if (requestId == null) {
             _messages.value = _messages.value + ChatMessage(
                 id = UUID.randomUUID().toString(),
                 role = ChatRole.SYSTEM,
@@ -178,7 +190,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
             return
         }
+        activeRequestId = requestId
+        cancelledRequestId = null
         _busy.value = true
+    }
+
+    /**
+     * Abandon the turn in flight — the model has gone after the wrong thing and
+     * the reader wants the composer back.
+     *
+     * Nothing is awaited: a cancelled turn ends in silence rather than a
+     * `finish` frame, so this closes the stream out locally and hands the input
+     * back immediately.
+     */
+    fun stop() {
+        if (!_busy.value) return
+        activeRequestId?.let { requestId ->
+            transport.cancelChat(requestId)
+            cancelledRequestId = requestId
+        }
+        val streamed = streamingId?.let { id -> _messages.value.firstOrNull { it.id == id } }
+        when {
+            // Stopped before the first token: an empty card is worse than no
+            // card, and the turn is fully described by the user message above it.
+            streamed != null && streamed.text.isBlank() ->
+                _messages.value = _messages.value.filterNot { it.id == streamed.id }
+
+            streamed != null -> appendToStream("\n\n_[Stopped]_")
+        }
+        finishStream()
     }
 
     /** Manual retry after the backoff gave up. */
@@ -192,6 +232,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             prefs.resetInstanceId()
             _messages.value = emptyList()
             streamingId = null
+            activeRequestId = null
+            cancelledRequestId = null
             _busy.value = false
             _pendingImage.value = null
             endpoint?.let { open(it) }
@@ -206,6 +248,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // reports its own set once connected.
         _mcpServers.value = emptyList()
         streamingId = null
+        activeRequestId = null
+        cancelledRequestId = null
         _busy.value = false
         _pendingImage.value = null
 
@@ -257,6 +301,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun handle(event: AgentWebSocket.Event) {
+        cancelledRequestId?.let { if (event.requestIdOrNull() == it) return }
         when (event) {
             is AgentWebSocket.Event.Open -> {
                 _connection.value = Connection.Connected
@@ -361,7 +406,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _messages.value = _messages.value.map { if (it.id == id) it.copy(streaming = false) else it }
             streamingId = null
         }
+        activeRequestId = null
         _busy.value = false
+    }
+
+    /** The turn a frame belongs to; null for connection, state and RPC frames. */
+    private fun AgentWebSocket.Event.requestIdOrNull(): String? = when (this) {
+        is AgentWebSocket.Event.StreamStart -> requestId
+        is AgentWebSocket.Event.TextDelta -> requestId
+        is AgentWebSocket.Event.ToolCall -> requestId
+        is AgentWebSocket.Event.ToolFailed -> requestId
+        is AgentWebSocket.Event.StreamError -> requestId
+        is AgentWebSocket.Event.StreamFinish -> requestId
+        is AgentWebSocket.Event.StreamResuming -> requestId
+        else -> null
     }
 
     override fun onCleared() {

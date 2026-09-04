@@ -2,4 +2,8 @@
 <resources>
     <!-- Matches the Material 3 dark primaryContainer the app renders with. -->
     <color name="ic_launcher_background">#381E72</color>
+
+    <!-- The darkest navy in the logo art, so the icon's faded edges have
+         nothing to sit against but their own background. -->
+    <color name="splash_background">#150C33</color>
 </resources>

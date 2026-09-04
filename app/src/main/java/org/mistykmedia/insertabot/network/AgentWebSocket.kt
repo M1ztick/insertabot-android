@@ -45,6 +45,9 @@ object AgentFrames {
     const val MCP_SERVERS = "cf_agent_mcp_servers"
     const val RPC = "rpc"
 
+    /** Aborts the turn named by `id`. The agent answers with silence, not a frame. */
+    const val CHAT_REQUEST_CANCEL = "cf_agent_chat_request_cancel"
+
     /** Server names the agent instance this socket is bound to on connect. */
     const val IDENTITY = "cf_agent_identity"
 
@@ -181,6 +184,23 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             // `init` mirrors a fetch() RequestInit; `body` is a *string*, not an object.
             .put("init", JSONObject().put("method", "POST").put("body", body))
         return if (ws.send(frame.toString())) requestId else null
+    }
+
+    /**
+     * Aborts the turn [requestId] is streaming.
+     *
+     * The agent breaks out of its send loop *without* broadcasting a terminal
+     * `done` frame, so the caller owns ending its own streaming state — waiting
+     * on a [Event.StreamFinish] that never comes would leave the UI busy for
+     * good. Returns false when the socket is closed, in which case there is
+     * nothing streaming to stop anyway.
+     */
+    fun cancelChat(requestId: String): Boolean {
+        val ws = socket ?: return false
+        val frame = JSONObject()
+            .put("type", AgentFrames.CHAT_REQUEST_CANCEL)
+            .put("id", requestId)
+        return ws.send(frame.toString())
     }
 
     /** Calls one of the agent's `@callable()` methods and awaits its reply. */

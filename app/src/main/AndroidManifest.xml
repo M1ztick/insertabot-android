@@ -10,7 +10,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="InsertaBot"
         android:supportsRtl="true"
-        android:theme="@style/Theme.InsertaBot">
+        android:theme="@style/Theme.InsertaBot.Splash">
         <activity
             android:name=".MainActivity"
             android:exported="true">

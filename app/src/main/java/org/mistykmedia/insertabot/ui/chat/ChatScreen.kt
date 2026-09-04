@@ -4,12 +4,14 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,7 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -37,12 +41,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
+import org.mistykmedia.insertabot.R
 import org.mistykmedia.insertabot.data.ChatRole
 import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.ui.uriToJpegBase64
@@ -84,7 +91,24 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
         ConnectionBanner(connection, onReconnect = viewModel::reconnect)
 
         if (messages.isEmpty() && connection is ChatViewModel.Connection.Connected) {
-            Text("Connected. Send a message to start the conversation.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // The empty state is the only place with room to spare, so the mark
+            // goes here rather than crowding the header on every screen.
+            Column(
+                Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.insertabot_logo),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.heightIn(max = 180.dp)
+                )
+                Text(
+                    "Send a message to start the conversation.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,12 +178,27 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
                     maxLines = 4
                 )
 
-                Button(
-                    onClick = { viewModel.submit(draft); draft = "" },
-                    enabled = (draft.isNotBlank() || pendingImage != null) && !busy && connection is ChatViewModel.Connection.Connected
-                ) {
-                    if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    else Icon(imageVector = Icons.Default.Send, contentDescription = "Send")
+                // The same slot sends and stops. A turn that went after the
+                // wrong thing is abandoned where the reader is already looking,
+                // rather than from a control that only exists while streaming.
+                if (busy) {
+                    Button(
+                        onClick = { viewModel.stop() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop generating")
+                    }
+                } else {
+                    Button(
+                        onClick = { viewModel.submit(draft); draft = "" },
+                        enabled = (draft.isNotBlank() || pendingImage != null) &&
+                            connection is ChatViewModel.Connection.Connected
+                    ) {
+                        Icon(imageVector = Icons.Default.Send, contentDescription = "Send")
+                    }
                 }
             }
         }
