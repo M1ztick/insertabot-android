@@ -19,12 +19,12 @@ plugins {
 
 android {
     namespace = "org.mistykmedia.insertabot"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.mistykmedia.insertabot"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // Every build handed to a tester needs a higher versionCode, or it
         // will not install over the one already on their device.
         versionCode = 3
