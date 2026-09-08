@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  debug-apk:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,8 +19,31 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+
+      # Tests run before the APK on purpose: the parser suites are the fast
+      # signal, and a regression there should stop the run in seconds rather
+      # than after a full assemble.
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Lint
+        run: ./gradlew :app:lintDebug
+
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug
+
+      # Uploaded even when a step above failed — the HTML reports are the only
+      # way to see which assertion broke without reproducing the run locally.
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: insertabot-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
