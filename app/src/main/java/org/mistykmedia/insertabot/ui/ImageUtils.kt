@@ -39,14 +39,33 @@ suspend fun uriToJpegBase64(context: Context, uri: Uri): String? = withContext(D
     }.getOrNull()
 }
 
-private fun scaleDown(bitmap: Bitmap, maxDimension: Int): Bitmap {
-    if (bitmap.width <= maxDimension && bitmap.height <= maxDimension) return bitmap
-    val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
-    return if (bitmap.width > bitmap.height) {
-        Bitmap.createScaledBitmap(bitmap, maxDimension, (maxDimension / ratio).toInt(), true)
+/**
+ * Target size for [scaleDown], as `width to height`.
+ *
+ * The long edge becomes [maxDimension] and the short edge keeps the aspect
+ * ratio — but never rounds below 1. A panorama divides its short edge to
+ * something under half a pixel (10000x3 at max 1024 truncates to 0), and
+ * `createScaledBitmap` rejects a zero dimension; the throw was swallowed by
+ * the `runCatching` in [uriToJpegBase64], so the picked image simply never
+ * appeared in the composer.
+ *
+ * Returns the input size unchanged when it already fits, which is how
+ * [scaleDown] knows to skip the copy.
+ */
+internal fun scaledDimensions(width: Int, height: Int, maxDimension: Int): Pair<Int, Int> {
+    if (width <= maxDimension && height <= maxDimension) return width to height
+    val ratio = width.toFloat() / height.toFloat()
+    return if (width > height) {
+        maxDimension to (maxDimension / ratio).toInt().coerceAtLeast(1)
     } else {
-        Bitmap.createScaledBitmap(bitmap, (maxDimension * ratio).toInt(), maxDimension, true)
+        (maxDimension * ratio).toInt().coerceAtLeast(1) to maxDimension
     }
+}
+
+private fun scaleDown(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val (width, height) = scaledDimensions(bitmap.width, bitmap.height, maxDimension)
+    if (width == bitmap.width && height == bitmap.height) return bitmap
+    return Bitmap.createScaledBitmap(bitmap, width, height, true)
 }
 
 private fun compressToSize(bitmap: Bitmap, initialQuality: Int, maxBytes: Int): ByteArray {

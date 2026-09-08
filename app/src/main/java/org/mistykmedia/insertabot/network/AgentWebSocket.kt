@@ -216,13 +216,18 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
             .put("method", method)
             .put("args", JSONArray().apply { args.forEach { put(it ?: JSONObject.NULL) } })
 
-        if (!ws.send(frame.toString())) {
+        // `finally` covers every exit, including a cancelled caller — that path
+        // throws past the returns below and would otherwise strand `id` in the
+        // map until the socket closes.
+        try {
+            if (!ws.send(frame.toString())) {
+                return Result.failure(IllegalStateException("Send failed"))
+            }
+            return withTimeoutOrNull(timeoutMs) { pending.await() }
+                ?: Result.failure<Any?>(IllegalStateException("RPC '$method' timed out"))
+        } finally {
             pendingRpc.remove(id)
-            return Result.failure(IllegalStateException("Send failed"))
         }
-        return withTimeoutOrNull(timeoutMs) { pending.await() }
-            ?: Result.failure<Any?>(IllegalStateException("RPC '$method' timed out"))
-                .also { pendingRpc.remove(id) }
     }
 
     suspend fun setModelLane(lane: ModelLane): Result<Any?> =

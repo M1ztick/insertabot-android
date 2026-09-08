@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.dp
  * the rest of the message until the closer shows up.
  */
 
-private sealed interface MdBlock {
+internal sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
     data class Item(val marker: String, val text: String) : MdBlock
@@ -62,7 +62,7 @@ private val TABLE_DIVIDER = Regex("^\\s*\\|?[\\s:|-]+\\|[\\s:|-]*$")
 private fun splitRow(line: String): List<String> =
     line.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
 
-private fun parseBlocks(source: String): List<MdBlock> {
+internal fun parseBlocks(source: String): List<MdBlock> {
     val lines = source.replace("\r\n", "\n").split('\n')
     val blocks = mutableListOf<MdBlock>()
     val paragraph = StringBuilder()
@@ -144,7 +144,7 @@ private fun parseBlocks(source: String): List<MdBlock> {
  * A delimiter only takes effect once its closer is found, so unterminated
  * markers stay literal instead of consuming the remainder of the message.
  */
-private fun inline(source: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
+internal fun inline(source: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < source.length) {
         val c = source[i]
@@ -165,7 +165,10 @@ private fun inline(source: String, linkColor: Color): AnnotatedString = buildAnn
         val three = if (i + 2 < source.length) source.substring(i, i + 3) else ""
         if (three == "***" || three == "___") {
             val end = source.indexOf(three, i + 3)
-            if (end > i) {
+            // end == i + 3 is an empty span — "______" is six literal
+            // underscores, not an empty bold-italic run that renders as
+            // nothing. Same rule as the single-marker case below.
+            if (end > i + 3) {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
                     append(inline(source.substring(i + 3, end), linkColor))
                 }
@@ -181,7 +184,8 @@ private fun inline(source: String, linkColor: Color): AnnotatedString = buildAnn
         }
         if (twoStyle != null) {
             val end = source.indexOf(two, i + 2)
-            if (end > i) {
+            // end == i + 2 would be an empty span, which is a literal pair.
+            if (end > i + 2) {
                 withStyle(twoStyle) { append(inline(source.substring(i + 2, end), linkColor)) }
                 i = end + 2; continue
             }

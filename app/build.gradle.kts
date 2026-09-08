@@ -63,6 +63,11 @@ android {
 
     buildFeatures { compose = true; buildConfig = true }
 
+    // The parsers under test are pure Kotlin over Compose value types, so they
+    // run on the JVM without Robolectric. Default returns keep an incidental
+    // android.* call from failing a test with "not mocked" instead of a result.
+    testOptions { unitTests { isReturnDefaultValues = true } }
+
     packaging {
         resources {
             excludes.add("/META-INF/AL2.0")
@@ -90,4 +95,5 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    testImplementation(libs.junit)
 }
