@@ -3,6 +3,7 @@ package org.mistykmedia.insertabot
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import org.mistykmedia.insertabot.ui.InsertaBotApp
 import org.mistykmedia.insertabot.ui.theme.InsertaBotTheme
@@ -13,6 +14,10 @@ class MainActivity : ComponentActivity() {
         // Must run before super.onCreate so the launch theme is swapped for
         // Theme.InsertaBot before the first frame is drawn.
         installSplashScreen()
+        // targetSdk 36 draws edge to edge whether or not it is asked for, so
+        // opting in explicitly is what makes the bar scrims predictable rather
+        // than leaving the system to guess from the window background.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         setContent {

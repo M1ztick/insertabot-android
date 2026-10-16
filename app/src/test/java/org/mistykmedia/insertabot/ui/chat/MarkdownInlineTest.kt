@@ -1,11 +1,13 @@
 package org.mistykmedia.insertabot.ui.chat
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +27,13 @@ class MarkdownInlineTest {
 
     private fun styleAt(source: String, index: Int) =
         render(source).spanStyles.firstOrNull { index >= it.start && index < it.end }?.item
+
+    /** The URL annotation covering [index], or null when the span is not a link. */
+    private fun linkAt(source: String, index: Int): LinkAnnotation.Url? =
+        render(source)
+            .getLinkAnnotations(index, index + 1)
+            .firstOrNull()
+            ?.item as? LinkAnnotation.Url
 
     @Test
     fun `plain text passes through untouched`() {
@@ -70,7 +79,42 @@ class MarkdownInlineTest {
     @Test
     fun `links render their label and drop the target`() {
         assertEquals("Anthropic", text("[Anthropic](https://anthropic.com)"))
-        assertEquals(TextDecoration.Underline, styleAt("[Anthropic](https://anthropic.com)", 0)?.textDecoration)
+        // An http(s) label is a real link now, so its styling travels in the
+        // LinkAnnotation rather than as a plain span.
+        assertEquals(
+            TextDecoration.Underline,
+            linkAt("[Anthropic](https://anthropic.com)", 0)?.styles?.style?.textDecoration
+        )
+    }
+
+    @Test
+    fun `an http target is followable`() {
+        val url = linkAt("[x](https://example.com/a?b=c)", 0)?.url
+        assertEquals("https://example.com/a?b=c", url)
+        assertEquals("http://example.com", linkAt("[x](http://example.com)", 0)?.url)
+    }
+
+    @Test
+    fun `a target containing parentheses is not truncated`() {
+        // Wikipedia-style targets are the common case. Taking the first ')'
+        // both cut the URL short and left the remainder as a stray character
+        // in the label.
+        val source = "[Nirvana](https://en.wikipedia.org/wiki/Nirvana_(band))"
+        assertEquals("Nirvana", text(source))
+        assertEquals("https://en.wikipedia.org/wiki/Nirvana_(band)", linkAt(source, 0)?.url)
+    }
+
+    @Test
+    fun `a non-http target is styled but not followable`() {
+        // The label must still render, but handing javascript:, intent: or a
+        // relative path to the URI handler is what this guards against.
+        for (target in listOf("javascript:alert(1)", "intent://evil", "/relative", "mailto:a@b.c")) {
+            val source = "[label]($target)"
+            assertEquals("label", text(source))
+            assertNull("made $target followable", linkAt(source, 0))
+            // Still underlined, so it does not silently lose its emphasis.
+            assertEquals(TextDecoration.Underline, styleAt(source, 0)?.textDecoration)
+        }
     }
 
     @Test

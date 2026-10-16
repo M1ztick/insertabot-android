@@ -37,7 +37,9 @@ class MarkdownBlockTest {
     @Test
     fun `fenced code keeps its body verbatim`() {
         assertEquals(
-            listOf(MdBlock.Code("fun main() {\n    println(\"hi\")\n}")),
+            // The fence's info string is now carried alongside the body so the
+            // block can label itself; the body itself is still untouched.
+            listOf(MdBlock.Code("fun main() {\n    println(\"hi\")\n}", "kotlin")),
             blocks("```kotlin\nfun main() {\n    println(\"hi\")\n}\n```")
         )
     }
@@ -151,5 +153,36 @@ class MarkdownBlockTest {
             // Throwing here would crash the message list mid-stream.
             parseBlocks(prefix)
         }
+    }
+
+    // ── Fence info strings ───────────────────────────────────────────────────
+
+    @Test
+    fun `a fence language is captured and shown as the block label`() {
+        val block = blocks("```kotlin\nval x = 1\n```").single() as MdBlock.Code
+        assertEquals("kotlin", block.language)
+        assertEquals("val x = 1", block.code)
+    }
+
+    @Test
+    fun `a bare fence has no language`() {
+        val block = blocks("```\nplain\n```").single() as MdBlock.Code
+        assertEquals("", block.language)
+    }
+
+    @Test
+    fun `only the first word of an info string is taken as the language`() {
+        // ```js title="a.js" is common; the rest is not a language name.
+        val block = blocks("```js title=\"a.js\"\nx\n```").single() as MdBlock.Code
+        assertEquals("js", block.language)
+    }
+
+    @Test
+    fun `an unterminated fence still carries its language`() {
+        // The normal mid-stream state: the opening fence has arrived, the
+        // closer has not.
+        val block = blocks("```python\nimport os").single() as MdBlock.Code
+        assertEquals("python", block.language)
+        assertEquals("import os", block.code)
     }
 }
