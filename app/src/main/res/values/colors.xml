@@ -6,4 +6,9 @@
     <!-- The darkest navy in the logo art, so the icon's faded edges have
          nothing to sit against but their own background. -->
     <color name="splash_background">#150C33</color>
+
+    <!-- Matches LightColors.background in Theme.kt; values-night overrides it
+         with the dark ground. Set as windowBackground so the hand-off from the
+         splash screen does not flash a stock grey. -->
+    <color name="window_background">#FFF7FB</color>
 </resources>

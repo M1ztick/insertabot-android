@@ -1,8 +1,14 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.InsertaBot" parent="android:style/Theme.Material.NoActionBar">
+    <!--
+        Light is the default qualifier and dark lives in values-night, so the
+        window matches the Compose scheme before the first frame and the cold
+        start does not flash the wrong ground under it.
+    -->
+    <style name="Theme.InsertaBot" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 
     <!--

@@ -14,20 +14,29 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import org.mistykmedia.insertabot.ui.theme.MonoTextStyle
 
 /**
  * Minimal Markdown rendering for agent replies.
@@ -47,7 +56,9 @@ internal sealed interface MdBlock {
     data class Heading(val level: Int, val text: String) : MdBlock
     data class Paragraph(val text: String) : MdBlock
     data class Item(val marker: String, val text: String) : MdBlock
-    data class Code(val code: String) : MdBlock
+
+    /** @param language the fence's info string, e.g. ```kotlin — blank when absent. */
+    data class Code(val code: String, val language: String = "") : MdBlock
     data class Quote(val text: String) : MdBlock
     data object Rule : MdBlock
     data class Table(val header: List<String>, val rows: List<List<String>>) : MdBlock
@@ -61,6 +72,28 @@ private val TABLE_DIVIDER = Regex("^\\s*\\|?[\\s:|-]+\\|[\\s:|-]*$")
 
 private fun splitRow(line: String): List<String> =
     line.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
+
+/**
+ * Index of the `)` closing the group that opens at [open], or -1 if unclosed.
+ *
+ * Nesting is counted rather than taking the first `)`: targets legitimately
+ * contain parens — `/wiki/Nirvana_(band)` is the classic case — and stopping
+ * early truncates the URL *and* leaves the remainder as a stray character in
+ * the rendered label.
+ */
+private fun closingParen(source: String, open: Int): Int {
+    var depth = 0
+    for (index in open until source.length) {
+        when (source[index]) {
+            '(' -> depth++
+            ')' -> {
+                depth--
+                if (depth == 0) return index
+            }
+        }
+    }
+    return -1
+}
 
 internal fun parseBlocks(source: String): List<MdBlock> {
     val lines = source.replace("\r\n", "\n").split('\n')
@@ -80,13 +113,19 @@ internal fun parseBlocks(source: String): List<MdBlock> {
         // mid-stream state, not an error.
         if (line.trimStart().startsWith("```")) {
             flushParagraph()
+            // The info string names the language. Only the first word is taken:
+            // ```js title="x" is common and the rest is not a language name.
+            val language = line.trimStart().removePrefix("```").trim()
+                .substringBefore(' ')
+                .takeIf { it.all(Char::isLetterOrDigit) }
+                .orEmpty()
             val body = StringBuilder()
             i++
             while (i < lines.size && !lines[i].trimStart().startsWith("```")) {
                 body.appendLine(lines[i]); i++
             }
             if (i < lines.size) i++ // consume the closing fence when present
-            blocks += MdBlock.Code(body.toString().trimEnd('\n'))
+            blocks += MdBlock.Code(body.toString().trimEnd('\n'), language)
             continue
         }
 
@@ -203,14 +242,30 @@ internal fun inline(source: String, linkColor: Color): AnnotatedString = buildAn
             }
         }
 
-        // [label](url) — styled, not clickable.
+        // [label](url) — styled and followable. The destination is attached as
+        // a LinkAnnotation so the label stays the only thing on screen while
+        // the URL remains reachable; a bare styled span looked tappable and
+        // then did nothing.
         if (c == '[') {
             val close = source.indexOf(']', i)
             if (close > i && close + 1 < source.length && source[close + 1] == '(') {
-                val paren = source.indexOf(')', close)
+                val paren = closingParen(source, close + 1)
                 if (paren > close) {
-                    withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
-                        append(source.substring(i + 1, close))
+                    val label = source.substring(i + 1, close)
+                    val target = source.substring(close + 2, paren).trim().substringBefore(' ')
+                    val style = SpanStyle(
+                        color = linkColor,
+                        textDecoration = TextDecoration.Underline
+                    )
+                    // Only http(s) is handed to the browser; anything else
+                    // (javascript:, intent:, a relative path) renders as plain
+                    // styled text rather than becoming a tappable target.
+                    if (target.startsWith("https://") || target.startsWith("http://")) {
+                        withLink(LinkAnnotation.Url(target, TextLinkStyles(style = style))) {
+                            append(label)
+                        }
+                    } else {
+                        withStyle(style) { append(label) }
                     }
                     i = paren + 1; continue
                 }
@@ -218,6 +273,65 @@ internal fun inline(source: String, linkColor: Color): AnnotatedString = buildAn
         }
 
         append(c); i++
+    }
+}
+
+/**
+ * A fenced block, with its language and a copy control.
+ *
+ * Copying code off a phone by selecting it character by character is the worst
+ * part of reading a code answer on mobile, so the whole block goes to the
+ * clipboard in one tap.
+ */
+@Composable
+private fun CodeBlock(block: MdBlock.Code, color: Color) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(block.code) { mutableStateOf(false) }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 4.dp, top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    block.language.ifBlank { "code" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(block.code))
+                        copied = true
+                    }
+                ) {
+                    Text(
+                        if (copied) "Copied" else "Copy",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+            // Code must not force the bubble wide; it scrolls on its own.
+            Box(
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
+            ) {
+                Text(
+                    block.code,
+                    color = color,
+                    style = MonoTextStyle,
+                    softWrap = false
+                )
+            }
+        }
     }
 }
 
@@ -247,21 +361,7 @@ fun MarkdownText(text: String, color: Color, modifier: Modifier = Modifier) {
                     Text(inline(block.text, linkColor), color = color, style = MaterialTheme.typography.bodyMedium)
                 }
 
-                is MdBlock.Code -> Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Code must not force the bubble wide; it scrolls on its own.
-                    Box(Modifier.horizontalScroll(rememberScrollState()).padding(10.dp)) {
-                        Text(
-                            block.code,
-                            color = color,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            softWrap = false
-                        )
-                    }
-                }
+                is MdBlock.Code -> CodeBlock(block, color)
 
                 is MdBlock.Quote -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.width(3.dp).padding(vertical = 2.dp)) {

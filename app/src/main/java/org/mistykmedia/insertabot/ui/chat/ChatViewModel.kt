@@ -10,9 +10,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.AppPreferences
@@ -162,24 +164,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        val displayText = buildString {
-            if (_pendingImage.value != null) append("[Image]")
-            if (trimmed.isNotEmpty()) {
-                if (isNotEmpty()) append(" ")
-                append(trimmed)
-            }
-        }
-
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = ChatRole.USER,
-            text = displayText,
+            // The attachment is rendered from contentParts, so the text carries
+            // only what was typed — an "[Image]" prefix here would also have to
+            // be stripped back out before the turn went on the wire.
+            text = trimmed,
             contentParts = parts
         )
         val history = _messages.value + user
         _messages.value = history
         _pendingImage.value = null
 
+        send(history)
+    }
+
+    /**
+     * Reissue the last turn.
+     *
+     * The reply being replaced is dropped along with any error card above it,
+     * so a failed or unhelpful answer is retried in place rather than appended
+     * to — the agent replays the whole history each turn, and keeping the dead
+     * reply would feed it back as context for its own replacement.
+     */
+    fun retry() {
+        if (_busy.value) return
+        val history = truncateForRetry(_messages.value) ?: return
+        _messages.value = history
+        send(history)
+    }
+
+    /** True when there is a user turn to reissue and nothing in flight. */
+    val canRetry = messages.map { !it.isEmpty() && truncateForRetry(it) != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    private fun send(history: List<ChatMessage>) {
         val requestId = transport.sendChat(history)
         if (requestId == null) {
             _messages.value = _messages.value + ChatMessage(

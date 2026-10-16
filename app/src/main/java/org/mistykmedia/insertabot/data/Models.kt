@@ -3,10 +3,14 @@ package org.mistykmedia.insertabot.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-enum class ModelLane(val wireValue: String, val label: String) {
-    AUTO("auto", "Auto"),
-    RESEARCH("research", "Research"),
-    CODING("coding", "Coding")
+/**
+ * @param description shown beside [label] in the picker — the names alone do
+ *   not say what the lanes actually route to.
+ */
+enum class ModelLane(val wireValue: String, val label: String, val description: String) {
+    AUTO("auto", "Auto", "Picks per message"),
+    RESEARCH("research", "Research", "Longer, sourced answers"),
+    CODING("coding", "Coding", "Tuned for code")
 }
 
 data class AppSettings(
