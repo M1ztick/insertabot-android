@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.Icons
@@ -33,6 +34,12 @@ fun InsertaBotApp() {
     // Chat and Servers talk to the same agent over the same socket, so the
     // view model is hoisted here rather than resolved separately per screen.
     val viewModel: ChatViewModel = viewModel()
+    // Coming back to the app is the moment a reader expects it to work again,
+    // whichever tab they land on.
+    LifecycleStartEffect(viewModel) {
+        viewModel.onForeground()
+        onStopOrDispose { }
+    }
     Scaffold(
         bottomBar = {
             NavigationBar {

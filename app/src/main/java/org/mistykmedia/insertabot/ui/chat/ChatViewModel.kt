@@ -50,6 +50,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_RETRIES = 5
         const val INITIAL_RETRY_MS = 1_000L
         const val MAX_RETRY_MS = 30_000L
+
+        /** Longest a streamed token waits before it is drawn; about three frames. */
+        const val STREAM_FLUSH_MS = 50L
     }
 
     private val prefs = AppPreferences(application)
@@ -106,19 +109,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     private var cancelledRequestId: String? = null
 
+    /** Streamed text not yet published to [messages]; see [appendToStream]. */
+    private val pendingDelta = StringBuilder()
+    private var flushJob: Job? = null
+
+    /** The default network the socket was last opened over. Main thread only. */
+    private var lastNetwork: Network? = null
+
     /**
-     * Resume once the network comes back.
+     * Resume once the network comes back, or moves.
      *
      * Doze and network handoffs fail DNS while the radio is still returning, so
      * the retry budget is spent against a dead link and the socket stays down
      * for good — the reader comes back to an app that quietly stopped working
      * and has to find the Reconnect link. Retrying on the signal that actually
      * matters makes that recovery invisible instead.
+     *
+     * A *different* default network (Wi-Fi to mobile, a VPN reconnecting)
+     * means the open socket is bound to a route that no longer exists. It
+     * fails silently until a keepalive notices, so reconnect right away rather
+     * than wait out the ping timeout.
      */
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             viewModelScope.launch {
-                if (_connection.value is Connection.Disconnected) endpoint?.let { open(it) }
+                val switched = lastNetwork != null && lastNetwork != network
+                lastNetwork = network
+                val current = _connection.value
+                if (current is Connection.Disconnected || (switched && current !is Connection.Unconfigured)) {
+                    endpoint?.let { open(it) }
+                }
             }
         }
     }
@@ -225,6 +245,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun stop() {
         if (!_busy.value) return
+        // Queued tokens are part of what the reader saw arriving; publish them
+        // before deciding whether anything was streamed at all.
+        flushPending()
         activeRequestId?.let { requestId ->
             transport.cancelChat(requestId)
             cancelledRequestId = requestId
@@ -246,32 +269,53 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         endpoint?.let { open(it) }
     }
 
+    /**
+     * The app is back in front of the reader.
+     *
+     * The backoff gives up after a handful of attempts, and a phone that was
+     * dozing spends them against a radio that is still asleep. Without this the
+     * reader comes back to a dead connection on an unchanged network, where
+     * nothing else would ever prompt a retry.
+     */
+    fun onForeground() {
+        if (_connection.value is Connection.Disconnected) reconnect()
+    }
+
     /** Rotates the instance id, which is a new Durable Object and a new thread. */
     fun newConversation() {
         viewModelScope.launch {
             prefs.resetInstanceId()
-            _messages.value = emptyList()
-            streamingId = null
-            activeRequestId = null
-            cancelledRequestId = null
-            _busy.value = false
-            _pendingImage.value = null
-            endpoint?.let { open(it) }
+            endpoint?.let { open(it, freshThread = true) } ?: run {
+                finishStream()
+                _messages.value = emptyList()
+                _pendingImage.value = null
+            }
         }
     }
 
-    private fun open(target: Endpoint) {
+    /**
+     * (Re)open the agent socket for [target].
+     *
+     * A reconnect to the same endpoint and thread keeps the transcript on
+     * screen: the agent re-sends the full history once connected anyway, and
+     * clearing it first flashed the empty state over the whole conversation on
+     * every network blip. Only a different endpoint or [freshThread] wipes it.
+     */
+    private fun open(target: Endpoint, freshThread: Boolean = false) {
+        val sameThread = !freshThread && target == endpoint
         endpoint = target
         session?.cancel()
-        _messages.value = emptyList()
-        // Servers belong to the agent we were talking to; a new endpoint
-        // reports its own set once connected.
-        _mcpServers.value = emptyList()
-        streamingId = null
-        activeRequestId = null
+        // Whatever was streaming is over: its socket is gone.
+        finishStream()
         cancelledRequestId = null
-        _busy.value = false
-        _pendingImage.value = null
+
+        if (!sameThread) {
+            _messages.value = emptyList()
+            // Servers belong to the agent we were talking to; a new endpoint
+            // reports its own set once connected.
+            _mcpServers.value = emptyList()
+            _pendingImage.value = null
+        }
 
         if (target.workerUrl.isBlank()) {
             _connection.value = Connection.Unconfigured
@@ -320,18 +364,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun handle(event: AgentWebSocket.Event) {
+    private fun handle(event: AgentWebSocket.Event) {
         cancelledRequestId?.let { if (event.requestIdOrNull() == it) return }
         when (event) {
             is AgentWebSocket.Event.Open -> {
                 _connection.value = Connection.Connected
                 // Re-assert the saved lane: agent state lives in the Durable
-                // Object and may have hibernated or been reset.
-                transport.setModelLane(prefs.settings.first().modelLane)
+                // Object and may have hibernated or been reset. Launched, not
+                // awaited — this handler is the only reader of the socket's
+                // frames, and suspending it on the RPC reply held up history
+                // and stream frames for as long as the agent took to answer.
+                viewModelScope.launch {
+                    transport.setModelLane(prefs.settings.first().modelLane)
+                }
             }
 
-            is AgentWebSocket.Event.Closed -> _connection.value = Connection.Disconnected(null)
-            is AgentWebSocket.Event.Failure -> _connection.value = Connection.Disconnected(event.message)
+            // The retry loop is about to reconnect, so this is a blip rather
+            // than an outage. Disconnected is reserved for when it gives up;
+            // reporting it on every drop flashed an error over the chat.
+            is AgentWebSocket.Event.Closed,
+            is AgentWebSocket.Event.Failure -> _connection.value = Connection.Connecting
 
             is AgentWebSocket.Event.StreamStart -> startStream(event.messageId)
             is AgentWebSocket.Event.TextDelta -> {
@@ -405,8 +457,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = _messages.value + ChatMessage(messageId, ChatRole.ASSISTANT, "", streaming = true)
     }
 
+    /**
+     * Queue [delta] for the streaming message.
+     *
+     * Tokens are coalesced and published at most once per [STREAM_FLUSH_MS]
+     * rather than one state change each. Every publish rebuilds the transcript
+     * list and re-parses the reply's Markdown, so per-token publishing did work
+     * that grew with the reply on every token — enough to fall behind on a long
+     * answer and make the screen stutter. Text arrives just as fast; it is only
+     * drawn in batches no slower than the display refreshes them anyway.
+     */
     private fun appendToStream(delta: String) {
-        val id = streamingId ?: return
+        if (streamingId == null) return
+        pendingDelta.append(delta)
+        if (flushJob == null) {
+            flushJob = viewModelScope.launch {
+                delay(STREAM_FLUSH_MS)
+                flushJob = null
+                flushPending()
+            }
+        }
+    }
+
+    /** Publish whatever [appendToStream] has queued. Safe to call when empty. */
+    private fun flushPending() {
+        flushJob?.cancel()
+        flushJob = null
+        val id = streamingId
+        if (id == null || pendingDelta.isEmpty()) {
+            pendingDelta.clear()
+            return
+        }
+        val delta = pendingDelta.toString()
+        pendingDelta.clear()
         _messages.value = _messages.value.map {
             if (it.id == id) {
                 // contentParts is what goes on the wire, and the whole history
@@ -421,6 +504,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun finishStream() {
+        flushPending()
         val id = streamingId
         if (id != null) {
             _messages.value = _messages.value.map { if (it.id == id) it.copy(streaming = false) else it }
