@@ -25,6 +25,7 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Wire frame names spoken by the Cloudflare Agents SDK over the agent WebSocket.
@@ -132,6 +133,8 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
         cfAccessClientId: String = "",
         cfAccessClientSecret: String = ""
     ): Flow<Event> = callbackFlow {
+        // Set once the collector has let go of this connection.
+        val abandoned = AtomicBoolean(false)
         val request = Request.Builder()
             .url(agentUrl(workerUrl, instanceId, bearerToken))
             .apply {
@@ -148,7 +151,7 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 // The handshake can finish after this connection was already
                 // abandoned for a newer one; adopting it would displace that.
-                if (isClosedForSend) {
+                if (abandoned.get()) {
                     webSocket.close(1000, "Client closed")
                     return
                 }
@@ -187,6 +190,7 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
             }
         })
         awaitClose {
+            abandoned.set(true)
             release(ws, "Connection closed")
             ws.close(1000, "Client closed")
         }
