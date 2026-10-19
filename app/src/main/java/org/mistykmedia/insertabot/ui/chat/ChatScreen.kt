@@ -19,6 +19,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,13 +62,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -80,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.R
 import org.mistykmedia.insertabot.data.ChatMessage
@@ -108,18 +112,28 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
     val clipboard = LocalClipboardManager.current
     val connected = connection is ChatViewModel.Connection.Connected
 
-    // Only follow the tail when the reader is already near it — otherwise
-    // scrolling up to re-read something fights every inbound token.
-    val following by remember {
-        derivedStateOf {
-            shouldFollowTail(
-                lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index,
-                itemCount = listState.layoutInfo.totalItemsCount
-            )
+    // Follow the reply unless the reader has taken over the scroll.
+    //
+    // This is decided by intent, not position: a streaming reply is a single
+    // list item, so "is the last item visible" stays true the whole time the
+    // reader is scrolled up inside it, and every token yanked them back down.
+    // A drag detaches; coming to rest at the very bottom, or tapping the
+    // jump button, re-attaches.
+    var following by rememberSaveable { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect {
+            if (it is DragInteraction.Start) following = false
         }
     }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress || listState.canScrollForward }
+            .collect { awayFromBottom -> if (!awayFromBottom) following = true }
+    }
+    // A snap, not an animation: tokens arrive many times a second, and each
+    // one cancelling and restarting an animated scroll is what made the whole
+    // screen shudder while a reply streamed in.
     LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
-        if (messages.isNotEmpty() && following) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isNotEmpty() && following) listState.snapToEnd(messages.lastIndex)
     }
 
     val photoPicker = rememberLauncherForActivityResult(
@@ -146,7 +160,19 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
             onNewChat = viewModel::newConversation
         )
 
-        ConnectionBanner(connection, onReconnect = viewModel::reconnect)
+        // A reconnect usually finishes inside a second. Showing the banner for
+        // it pushed the whole transcript down and back up again — so a socket
+        // blip only surfaces if it outlasts that.
+        var shownConnection by remember { mutableStateOf(connection) }
+        LaunchedEffect(connection) {
+            if (connection is ChatViewModel.Connection.Connecting &&
+                shownConnection is ChatViewModel.Connection.Connected
+            ) {
+                delay(1_500)
+            }
+            shownConnection = connection
+        }
+        ConnectionBanner(shownConnection, onReconnect = viewModel::reconnect)
 
         Box(Modifier.weight(1f)) {
             if (messages.isEmpty()) {
@@ -190,7 +216,8 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
                 ) {
                     FilledIconButton(
                         onClick = {
-                            scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                            following = true
+                            scope.launch { listState.snapToEnd(messages.lastIndex) }
                         },
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -571,3 +598,19 @@ private fun ConnectionBanner(connection: ChatViewModel.Connection, onReconnect: 
 }
 
 private enum class BannerTone { NEUTRAL, ERROR }
+
+/**
+ * Bring the *bottom* of the transcript into view.
+ *
+ * `scrollToItem(last)` alone aligns the last item's top with the top of the
+ * viewport, which for a reply taller than the screen shows its first lines and
+ * hides the ones arriving. Scrolling on by more than the item's height lands
+ * on its end instead: the list clamps at the end of its content, so the
+ * overshoot is safe.
+ */
+private suspend fun LazyListState.snapToEnd(lastIndex: Int) {
+    if (lastIndex < 0) return
+    if (layoutInfo.visibleItemsInfo.none { it.index == lastIndex }) scrollToItem(lastIndex)
+    val last = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastIndex } ?: return
+    scrollBy((last.size + layoutInfo.viewportSize.height).toFloat())
+}

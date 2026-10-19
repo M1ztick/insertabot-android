@@ -19,21 +19,3 @@ internal fun truncateForRetry(messages: List<ChatMessage>): List<ChatMessage>? {
     if (lastUser < 0) return null
     return messages.subList(0, lastUser + 1).toList()
 }
-
-/**
- * Whether the transcript should follow new tokens.
- *
- * Pinning to the tail unconditionally fights a reader who has scrolled up to
- * re-read something — the view yanks itself back down on every delta. So the
- * tail is only followed when the viewport is already within [threshold] items
- * of it, which is also true on the first render of an empty list.
- */
-internal fun shouldFollowTail(
-    lastVisibleIndex: Int?,
-    itemCount: Int,
-    threshold: Int = 2
-): Boolean {
-    if (itemCount == 0) return false
-    val last = lastVisibleIndex ?: return true
-    return last >= itemCount - 1 - threshold
-}

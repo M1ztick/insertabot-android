@@ -1,8 +1,10 @@
 package org.mistykmedia.insertabot.network
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -22,6 +24,8 @@ import java.net.URLEncoder
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Wire frame names spoken by the Cloudflare Agents SDK over the agent WebSocket.
@@ -67,10 +71,23 @@ object AgentFrames {
  * [sendChat] and [callRpc] write to the socket held open by that stream and are
  * no-ops (or failures) while it is closed.
  */
-class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
+class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
 
     private companion object {
         const val TAG = "AgentWebSocket"
+
+        /**
+         * Keepalive cadence. Without pings an idle socket that a carrier NAT, a
+         * VPN or the edge has silently dropped still looks open: sends appear
+         * to succeed and the reply simply never comes. OkHttp fails the socket
+         * when a pong does not come back within one interval, which hands the
+         * drop to the reconnect loop instead of leaving the chat stuck.
+         */
+        const val PING_INTERVAL_SECONDS = 25L
+
+        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+            .pingInterval(PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
+            .build()
     }
 
     sealed interface Event {
@@ -116,6 +133,8 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
         cfAccessClientId: String = "",
         cfAccessClientSecret: String = ""
     ): Flow<Event> = callbackFlow {
+        // Set once the collector has let go of this connection.
+        val abandoned = AtomicBoolean(false)
         val request = Request.Builder()
             .url(agentUrl(workerUrl, instanceId, bearerToken))
             .apply {
@@ -130,6 +149,12 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
 
         val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // The handshake can finish after this connection was already
+                // abandoned for a newer one; adopting it would displace that.
+                if (abandoned.get()) {
+                    webSocket.close(1000, "Client closed")
+                    return
+                }
                 socket = webSocket
                 trySend(Event.Open)
             }
@@ -138,25 +163,57 @@ class AgentWebSocket(private val client: OkHttpClient = OkHttpClient()) {
                 decode(text).forEach { trySend(it) }
             }
 
+            /**
+             * The server is closing — a Worker deploy or a Durable Object
+             * restart does this to every client. OkHttp waits for the client to
+             * answer before reporting [onClosed]; unanswered, the socket sat
+             * half-closed, still counted as open, swallowing every message sent
+             * on it, and the reconnect loop never heard about it.
+             */
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+                release(webSocket, "Connection closed")
+                trySend(Event.Closed)
+                close()
+            }
+
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                socket = null
-                failPendingRpc(t.message ?: "WebSocket connection failed")
+                release(webSocket, t.message ?: "WebSocket connection failed")
                 trySend(Event.Failure(t.message ?: "WebSocket connection failed"))
                 close(t)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                socket = null
-                failPendingRpc("Connection closed")
+                release(webSocket, "Connection closed")
                 trySend(Event.Closed)
                 close()
             }
         })
         awaitClose {
-            socket = null
-            failPendingRpc("Connection closed")
+            abandoned.set(true)
+            release(ws, "Connection closed")
             ws.close(1000, "Client closed")
         }
+    }
+        // Never drop a frame. The default buffer is 64 and trySend discards on
+        // overflow, so a long reply outrunning the UI lost words — or lost its
+        // `finish`, leaving the composer stuck on Stop.
+        .buffer(Channel.UNLIMITED)
+
+    /**
+     * Forget [webSocket] — but only if it is still the current one.
+     *
+     * A replaced socket (reconnect, new chat) reports its close late, often
+     * after its successor has already opened. Clearing unconditionally nulled
+     * the *new* socket, so the banner said Connected while every send failed
+     * with "Not connected", and its pending RPCs were failed along with it.
+     */
+    private fun release(webSocket: WebSocket, reason: String) {
+        synchronized(this) {
+            if (socket !== webSocket) return
+            socket = null
+        }
+        failPendingRpc(reason)
     }
 
     fun disconnect() {
