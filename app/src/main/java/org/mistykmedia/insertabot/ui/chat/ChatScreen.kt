@@ -404,7 +404,7 @@ private fun Composer(
     onPickImage: () -> Unit,
     onClearImage: () -> Unit,
     onSend: () -> Unit,
-    onStop: () -> Unit,
+    onSinset-block-start: () -> Unit,
     onRetry: () -> Unit
 ) {
     Surface(
