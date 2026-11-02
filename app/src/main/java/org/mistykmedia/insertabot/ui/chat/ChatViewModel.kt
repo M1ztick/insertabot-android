@@ -50,6 +50,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_RETRIES = 5
         const val INITIAL_RETRY_MS = 1_000L
         const val MAX_RETRY_MS = 30_000L
+
+        /**
+         * Deltas are batched into [messages] on this cadence rather than per
+         * token. A fast stream delivers hundreds of chunks a second and each
+         * commit copies the message list and re-parses Markdown, so token-rate
+         * commits spend the budget on recomposition; a 50ms window is still
+         * within a few frames of the wire and cuts that work ~20x.
+         */
+        const val STREAM_COMMIT_MS = 50L
     }
 
     private val prefs = AppPreferences(application)
@@ -94,6 +103,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
+
+    /**
+     * The streaming message's full text so far, accumulated here and committed
+     * to [messages] in [STREAM_COMMIT_MS] batches. Every byte still lands —
+     * [flushStream] runs before any code reads the message — but the list copy
+     * and Markdown re-parse happen at a bounded rate instead of per token.
+     */
+    private val streamBuffer = StringBuilder()
+
+    /** Scheduled but not yet run batched commit, if any. */
+    private var commitJob: Job? = null
 
     /** Id of the turn in flight — what a cancel has to be addressed to. */
     private var activeRequestId: String? = null
@@ -150,9 +170,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _pendingImage.value = null
     }
 
-    fun submit(text: String) {
+    /**
+     * Send one turn. Returns false when the send was refused — busy, empty, or
+     * no open socket — so the caller can keep what the reader typed rather
+     * than discarding a draft the Worker never received.
+     */
+    fun submit(text: String): Boolean {
         val trimmed = text.trim()
-        if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return
+        if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return false
 
         // Order mirrors public/index.js in the Worker repo: text first, then files.
         val parts = buildList {
@@ -177,7 +202,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = history
         _pendingImage.value = null
 
-        send(history)
+        return send(history)
     }
 
     /**
@@ -199,7 +224,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val canRetry = messages.map { !it.isEmpty() && truncateForRetry(it) != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    private fun send(history: List<ChatMessage>) {
+    private fun send(history: List<ChatMessage>): Boolean {
         val requestId = transport.sendChat(history)
         if (requestId == null) {
             _messages.value = _messages.value + ChatMessage(
@@ -208,11 +233,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 text = "Not connected to the Worker. Check the URL in Settings, then reconnect.",
                 error = true
             )
-            return
+            return false
         }
         activeRequestId = requestId
         cancelledRequestId = null
         _busy.value = true
+        return true
     }
 
     /**
@@ -229,6 +255,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             transport.cancelChat(requestId)
             cancelledRequestId = requestId
         }
+        // Batched commits mean the last tokens may still be buffered; push
+        // them through before deciding whether anything arrived at all.
+        flushStream()
         val streamed = streamingId?.let { id -> _messages.value.firstOrNull { it.id == id } }
         when {
             // Stopped before the first token: an empty card is worse than no
@@ -378,13 +407,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * frame once it has connected (or failed), so nothing is added optimistically
      * here — the list updates when the agent says so.
      */
-    fun addServer(name: String, url: String, token: String) {
+    fun addServer(name: String, url: String, token: String, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             _serverBusy.value = true
             _serverError.value = null
             val result = transport.callRpc("addServer", listOf(name, url, token.ifBlank { null }))
             _serverError.value = result.exceptionOrNull()?.message
             _serverBusy.value = false
+            onResult(result.isSuccess)
         }
     }
 
@@ -402,30 +432,58 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun startStream(messageId: String) {
         if (streamingId != null) return
         streamingId = messageId
+        streamBuffer.clear()
+        commitJob = null
         _messages.value = _messages.value + ChatMessage(messageId, ChatRole.ASSISTANT, "", streaming = true)
     }
 
     private fun appendToStream(delta: String) {
-        val id = streamingId ?: return
-        _messages.value = _messages.value.map {
-            if (it.id == id) {
-                // contentParts is what goes on the wire, and the whole history
-                // is replayed every turn. Growing `text` alone would send each
-                // finished assistant turn back as an empty text part.
-                val grown = it.text + delta
-                it.copy(text = grown, contentParts = listOf(ContentPart.Text(grown)))
-            } else {
-                it
+        if (streamingId == null) return
+        streamBuffer.append(delta)
+        // One scheduled commit per window; deltas arriving while one is pending
+        // ride along instead of scheduling their own.
+        if (commitJob == null) {
+            commitJob = viewModelScope.launch {
+                delay(STREAM_COMMIT_MS)
+                commitJob = null
+                commitStream()
             }
         }
     }
 
+    /** Write everything buffered for the streaming message into [messages]. */
+    private fun commitStream() {
+        val id = streamingId ?: return
+        val text = streamBuffer.toString()
+        val list = _messages.value
+        val index = list.indexOfFirst { it.id == id }
+        if (index < 0) return
+        // contentParts is what goes on the wire, and the whole history is
+        // replayed every turn. Growing `text` alone would send each finished
+        // assistant turn back as an empty text part.
+        val updated = list[index].copy(text = text, contentParts = listOf(ContentPart.Text(text)))
+        _messages.value = list.toMutableList().also { it[index] = updated }
+    }
+
+    /** Cancel any pending batch and commit now — read paths call this first. */
+    private fun flushStream() {
+        commitJob?.cancel()
+        commitJob = null
+        commitStream()
+    }
+
     private fun finishStream() {
+        flushStream()
         val id = streamingId
         if (id != null) {
-            _messages.value = _messages.value.map { if (it.id == id) it.copy(streaming = false) else it }
+            val list = _messages.value
+            val index = list.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                _messages.value = list.toMutableList().also { it[index] = list[index].copy(streaming = false) }
+            }
             streamingId = null
         }
+        streamBuffer.clear()
         activeRequestId = null
         _busy.value = false
     }

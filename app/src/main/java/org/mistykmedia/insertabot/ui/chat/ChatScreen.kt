@@ -216,7 +216,9 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
                 )
             },
             onClearImage = viewModel::clearPendingImage,
-            onSend = { viewModel.submit(draft); draft = "" },
+            // Clear only when the Worker took the turn; a refused send (busy,
+            // socket down) must leave the reader's words where they typed them.
+            onSend = { if (viewModel.submit(draft)) draft = "" },
             onStop = viewModel::stop,
             onRetry = viewModel::retry
         )

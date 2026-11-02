@@ -12,19 +12,20 @@ val hasReleaseSigning = keystorePropertiesFile.exists()
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // kotlin-android is auto-applied by AGP 9.x — declaring it explicitly
+    // causes "Cannot add extension with name 'kotlin'".
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "org.mistykmedia.insertabot"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "org.mistykmedia.insertabot"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         // Every build handed to a tester needs a higher versionCode, or it
         // will not install over the one already on their device.
         versionCode = 4
@@ -59,8 +60,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions { jvmTarget = "17" }
-
     buildFeatures { compose = true; buildConfig = true }
 
     // The parsers under test are pure Kotlin over Compose value types, so they
@@ -74,6 +73,10 @@ android {
             excludes.add("/META-INF/LGPL2.1")
         }
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
