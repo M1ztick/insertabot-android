@@ -243,7 +243,7 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
                 )
             },
             onClearImage = viewModel::clearPendingImage,
-            onSend = { viewModel.submit(draft); draft = "" },
+            onSend = { if (viewModel.submit(draft)) draft = "" },
             onStop = viewModel::stop,
             onRetry = viewModel::retry
         )

@@ -32,6 +32,11 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug
 
+      # Build the release variant (unsigned — key.properties is absent in CI)
+      # so the release code path, proguard rules, and minification can't rot.
+      - name: Assemble release APK
+        run: ./gradlew :app:assembleRelease
+
       # Uploaded even when a step above failed — the HTML reports are the only
       # way to see which assertion broke without reproducing the run locally.
       - name: Upload test and lint reports

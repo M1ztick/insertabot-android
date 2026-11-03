@@ -149,8 +149,12 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
 
         Button(
             onClick = {
-                viewModel.addServer(name.trim(), url.trim(), token.trim())
-                name = ""; url = ""; token = ""
+                // Keep the form when the agent refuses the server: the fields
+                // hold the URL and token the reader will retry, and retyping a
+                // secret is the worst kind of input to lose.
+                viewModel.addServer(name.trim(), url.trim(), token.trim()) { accepted ->
+                    if (accepted) { name = ""; url = ""; token = "" }
+                }
             },
             enabled = connected && !busy && name.isNotBlank() && url.startsWith("https://"),
             modifier = Modifier.fillMaxWidth()
