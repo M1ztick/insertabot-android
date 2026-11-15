@@ -1,20 +1,28 @@
 [versions]
-# 8.9 is the first AGP that accepts compileSdk 36; it needs Gradle 8.11.1,
-# which the wrapper is already on.
-agp = "8.9.1"
-kotlin = "2.0.21"
-composeBom = "2024.12.01"
-activityCompose = "1.10.0"
-lifecycle = "2.8.7"
-navigation = "2.8.5"
-datastore = "1.1.1"
-okhttp = "4.12.0"
-serialization = "1.7.3"
-coroutines = "1.9.0"
-# 3.1.0 is the first release with DataUriFetcher, which is what renders the
-# base64 data URIs uriToJpegBase64 produces. Do not drop below it.
-coil = "3.1.0"
-exifinterface = "1.3.7"
+# AGP 9.1.0+ is required by Compose UI 1.12.0 (from BOM 2025.12.01). 9.6.0 is
+# the latest stable 9.x and needs Gradle 9.x + compileSdk ≥ 37.
+agp = "9.5.0"
+# Kotlin 2.4.10 is the minimum that can read the stdlib metadata bundled with
+# the Compose BOM 2025.12.01 dependencies. AGP 9.5.0 ships with 2.2.0 but will
+# defer to this higher declared version.
+kotlin = "2.4.10"
+composeBom = "2025.12.01"
+# 1.14.0+ exist in metadata but not in the repository; 1.13.0 is the latest
+# published stable.
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+navigation = "2.10.2"
+datastore = "1.3.0"
+# OkHttp 5.x switches to kotlin.time.Duration for timeouts and may require
+# HttpUrl instead of String for Request.Builder.url(). The app uses the
+# default client; fixups will be applied if the build flags them.
+okhttp = "5.5.1"
+serialization = "1.12.0"
+coroutines = "1.11.0"
+# Coil 3.1.0 was the first release with DataUriFetcher for base64 data URIs.
+# 3.6.x is the latest stable 3.x line.
+coil = "3.6.3"
+exifinterface = "1.4.2"
 junit = "4.13.2"
 # Backports the Android 12 splash screen API down to minSdk, so the branded
 # cold start is the same on every version the app supports.

@@ -1,0 +1,14 @@
+# Normalize text files; LF in the working tree, conversion to native on checkout
+# only where it is safe. gradlew must keep LF or Linux CI dies on a shebang with
+# a carriage return; .bat is the one file that wants CRLF.
+* text=auto
+*.bat text eol=crlf
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# Binary assets
+*.jar binary
+*.png binary
+*.webp binary
+*.jpg binary
+*.zip binary

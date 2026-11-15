@@ -10,9 +10,10 @@ local.properties
 key.properties
 fdroid/repo/
 fdroid/archive/
-bugreport-insertabot-2026-08-25-04-51-26-ce22e72b-80db-4fe9-88ed-2ee8c3e1c8d9/avd_details.txt
-bugreport-insertabot-2026-08-25-04-51-26-ce22e72b-80db-4fe9-88ed-2ee8c3e1c8d9/bugreport.zip
-bugreport-insertabot-2026-08-25-04-51-26-ce22e72b-80db-4fe9-88ed-2ee8c3e1c8d9/screenshot.png
+# Bug reports — one-shot `adb bugreport` output. The directory name embeds
+# a timestamp and UUID that change every run, so a wildcard is the only way
+# to keep these out of the repo without updating .gitignore every time.
+bugreport-*/
 
 # Kotlin compiler session files
 .kotlin/

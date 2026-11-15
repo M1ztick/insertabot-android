@@ -98,6 +98,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Id of the assistant message currently being streamed into, if any. */
     private var streamingId: String? = null
 
+    /**
+     * The streaming message's full text so far, accumulated here and committed
+     * to [messages] in [STREAM_FLUSH_MS] batches. Every byte still lands —
+     * [flushPending] runs before any code reads the message — but the list copy
+     * and Markdown re-parse happen at a bounded rate instead of per token.
+     */
+    private val pendingDelta = StringBuilder()
+
+    /** Scheduled but not yet run batched commit, if any. */
+    private var flushJob: Job? = null
+
     /** Id of the turn in flight — what a cancel has to be addressed to. */
     private var activeRequestId: String? = null
 
@@ -108,10 +119,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * the composer back into busy after the socket blips.
      */
     private var cancelledRequestId: String? = null
-
-    /** Streamed text not yet published to [messages]; see [appendToStream]. */
-    private val pendingDelta = StringBuilder()
-    private var flushJob: Job? = null
 
     /** The default network the socket was last opened over. Main thread only. */
     private var lastNetwork: Network? = null
@@ -170,9 +177,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _pendingImage.value = null
     }
 
-    fun submit(text: String) {
+    /**
+     * Send one turn. Returns false when the send was refused — busy, empty, or
+     * no open socket — so the caller can keep what the reader typed rather
+     * than discarding a draft the Worker never received.
+     */
+    fun submit(text: String): Boolean {
         val trimmed = text.trim()
-        if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return
+        if ((trimmed.isEmpty() && _pendingImage.value == null) || _busy.value) return false
 
         // Order mirrors public/index.js in the Worker repo: text first, then files.
         val parts = buildList {
@@ -197,7 +209,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = history
         _pendingImage.value = null
 
-        send(history)
+        return send(history)
     }
 
     /**
@@ -219,7 +231,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val canRetry = messages.map { !it.isEmpty() && truncateForRetry(it) != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    private fun send(history: List<ChatMessage>) {
+    private fun send(history: List<ChatMessage>): Boolean {
         val requestId = transport.sendChat(history)
         if (requestId == null) {
             _messages.value = _messages.value + ChatMessage(
@@ -228,11 +240,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 text = "Not connected to the Worker. Check the URL in Settings, then reconnect.",
                 error = true
             )
-            return
+            return false
         }
         activeRequestId = requestId
         cancelledRequestId = null
         _busy.value = true
+        return true
     }
 
     /**
@@ -430,13 +443,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * frame once it has connected (or failed), so nothing is added optimistically
      * here — the list updates when the agent says so.
      */
-    fun addServer(name: String, url: String, token: String) {
+    fun addServer(name: String, url: String, token: String, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             _serverBusy.value = true
             _serverError.value = null
             val result = transport.callRpc("addServer", listOf(name, url, token.ifBlank { null }))
             _serverError.value = result.exceptionOrNull()?.message
             _serverBusy.value = false
+            onResult(result.isSuccess)
         }
     }
 
@@ -454,6 +468,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun startStream(messageId: String) {
         if (streamingId != null) return
         streamingId = messageId
+        pendingDelta.clear()
+        flushJob = null
         _messages.value = _messages.value + ChatMessage(messageId, ChatRole.ASSISTANT, "", streaming = true)
     }
 
@@ -507,9 +523,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         flushPending()
         val id = streamingId
         if (id != null) {
-            _messages.value = _messages.value.map { if (it.id == id) it.copy(streaming = false) else it }
+            val list = _messages.value
+            val index = list.indexOfFirst { it.id == id }
+            if (index >= 0) {
+                _messages.value = list.toMutableList().also { it[index] = list[index].copy(streaming = false) }
+            }
             streamingId = null
         }
+        pendingDelta.clear()
         activeRequestId = null
         _busy.value = false
     }
