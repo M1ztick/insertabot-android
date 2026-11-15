@@ -12,7 +12,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must run before super.onCreate so the launch theme is swapped for
-        // Theme.InsertaBot before the first frame is drawn.
+        // Theme.Saige before the first frame is drawn.
         installSplashScreen()
         // targetSdk 36 draws edge to edge whether or not it is asked for, so
         // opting in explicitly is what makes the bar scrims predictable rather
