@@ -50,6 +50,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -99,7 +100,11 @@ private val SUGGESTIONS = listOf(
 )
 
 @Composable
-fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
+fun ChatScreen(
+    padding: PaddingValues,
+    viewModel: ChatViewModel = viewModel(),
+    onSignIn: () -> Unit = {}
+) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val connection by viewModel.connection.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
@@ -172,12 +177,18 @@ fun ChatScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()) {
             }
             shownConnection = connection
         }
-        ConnectionBanner(shownConnection, onReconnect = viewModel::reconnect)
+        // An empty chat already says "sign in" with a full-size button; the
+        // banner is for when there is a transcript in the way of that.
+        if (!(messages.isEmpty() && shownConnection is ChatViewModel.Connection.SignInRequired)) {
+            ConnectionBanner(shownConnection, onReconnect = viewModel::reconnect, onSignIn = onSignIn)
+        }
 
         Box(Modifier.weight(1f)) {
             if (messages.isEmpty()) {
                 EmptyState(
                     connected = connected,
+                    signIn = connection as? ChatViewModel.Connection.SignInRequired,
+                    onSignIn = onSignIn,
                     onSuggestion = { viewModel.submit(it) }
                 )
             }
@@ -269,7 +280,12 @@ private fun ChatHeader(messageCount: Int, busy: Boolean, onNewChat: () -> Unit) 
 }
 
 @Composable
-private fun EmptyState(connected: Boolean, onSuggestion: (String) -> Unit) {
+private fun EmptyState(
+    connected: Boolean,
+    signIn: ChatViewModel.Connection.SignInRequired?,
+    onSignIn: () -> Unit,
+    onSuggestion: (String) -> Unit
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -291,12 +307,24 @@ private fun EmptyState(connected: Boolean, onSuggestion: (String) -> Unit) {
         )
         Spacer(Modifier.size(6.dp))
         Text(
-            if (connected) "Your conversation stays on this device and your own Worker."
-            else "Connect to your Worker to start chatting.",
+            when {
+                connected -> "Your conversation stays on this device and your own Worker."
+                signIn?.expired == true -> "Your sign-in has expired. Sign in again to pick up where you left off."
+                signIn != null -> "Sign in with your email to start chatting. You'll get a one-time code; no password needed."
+                else -> "Connect to your Worker to start chatting."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+
+        // The first thing a new user meets; make the way forward the obvious tap.
+        if (signIn != null) {
+            Spacer(Modifier.size(20.dp))
+            Button(onClick = onSignIn) {
+                Text(if (signIn.expired) "Sign in again" else "Sign in with email")
+            }
+        }
 
         // Suggestions are only actionable once there is a socket to send on.
         if (connected) {
@@ -544,10 +572,21 @@ private fun RenderUserImages(parts: List<ContentPart>) {
 }
 
 @Composable
-private fun ConnectionBanner(connection: ChatViewModel.Connection, onReconnect: () -> Unit) {
+private fun ConnectionBanner(
+    connection: ChatViewModel.Connection,
+    onReconnect: () -> Unit,
+    onSignIn: () -> Unit
+) {
     val (message, tone, action) = when (connection) {
         is ChatViewModel.Connection.Unconfigured ->
-            Triple("Set your Worker URL under Settings to connect.", BannerTone.NEUTRAL, false)
+            Triple("Set your Worker URL under Settings > Advanced to connect.", BannerTone.NEUTRAL, false)
+
+        is ChatViewModel.Connection.SignInRequired ->
+            Triple(
+                if (connection.expired) "Your sign-in has expired." else "You're not signed in.",
+                if (connection.expired) BannerTone.ERROR else BannerTone.NEUTRAL,
+                true
+            )
 
         is ChatViewModel.Connection.Connecting ->
             Triple("Connecting to the agent…", BannerTone.NEUTRAL, false)
@@ -591,7 +630,11 @@ private fun ConnectionBanner(connection: ChatViewModel.Connection, onReconnect: 
                 modifier = Modifier.weight(1f)
             )
             if (action) {
-                TextButton(onClick = onReconnect) { Text("Reconnect") }
+                if (connection is ChatViewModel.Connection.SignInRequired) {
+                    TextButton(onClick = onSignIn) { Text("Sign in") }
+                } else {
+                    TextButton(onClick = onReconnect) { Text("Reconnect") }
+                }
             }
         }
     }

@@ -30,6 +30,10 @@ android {
         // will not install over the one already on their device.
         versionCode = 4
         versionName = "0.4.0"
+
+        // Where a fresh install connects. Editable under Settings > Advanced;
+        // a tester signing in with email never needs to see it.
+        buildConfigField("String", "DEFAULT_WORKER_URL", "\"https://cfworker.insertabot.io\"")
     }
 
     signingConfigs {

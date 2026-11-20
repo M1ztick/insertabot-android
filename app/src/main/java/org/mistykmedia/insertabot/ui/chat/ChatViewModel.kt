@@ -22,17 +22,26 @@ import org.mistykmedia.insertabot.data.ChatMessage
 import org.mistykmedia.insertabot.data.ChatRole
 import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.data.McpServer
+import org.mistykmedia.insertabot.data.AccessToken
 import org.mistykmedia.insertabot.network.AgentWebSocket
+import org.mistykmedia.insertabot.network.Credentials
 import org.mistykmedia.insertabot.ui.JPEG_MEDIA_TYPE
 import java.util.UUID
 
 /** Connection parameters that require reopening the socket when they change. */
 private data class Endpoint(
     val workerUrl: String,
-    val bearerToken: String,
-    val cfAccessClientId: String,
-    val cfAccessClientSecret: String
-)
+    val credentials: Credentials
+) {
+    /**
+     * Same Worker, same account: a reconnect here is the same conversation
+     * list, so the transcript stays on screen. A refreshed sign-in for the
+     * same email counts — only a different account or Worker clears it.
+     */
+    fun sameAccountAs(other: Endpoint?): Boolean =
+        other != null && workerUrl == other.workerUrl &&
+            credentials.identityKey == other.credentials.identityKey
+}
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -44,6 +53,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         /** Retries exhausted — [reconnect] is the way back. */
         data class Disconnected(val reason: String?) : Connection
+
+        /**
+         * Nothing to authenticate with, or the sign-in ran out. Retrying
+         * cannot fix this; signing in again can. [expired] tells the two
+         * apart so the prompt can say which.
+         */
+        data class SignInRequired(val expired: Boolean) : Connection
     }
 
     private companion object {
@@ -143,7 +159,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val switched = lastNetwork != null && lastNetwork != network
                 lastNetwork = network
                 val current = _connection.value
-                if (current is Connection.Disconnected || (switched && current !is Connection.Unconfigured)) {
+                // A sign-in problem is not a network problem; a new route won't fix it.
+                val waiting = current is Connection.Unconfigured || current is Connection.SignInRequired
+                if (current is Connection.Disconnected || (switched && !waiting)) {
                     endpoint?.let { open(it) }
                 }
             }
@@ -153,7 +171,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             prefs.settings
-                .map { Endpoint(it.workerUrl, it.bearerToken, it.cfAccessClientId, it.cfAccessClientSecret) }
+                .map {
+                    Endpoint(
+                        it.workerUrl,
+                        Credentials(
+                            bearerToken = it.bearerToken,
+                            cfAccessClientId = it.cfAccessClientId,
+                            cfAccessClientSecret = it.cfAccessClientSecret,
+                            accessToken = it.accessToken,
+                            accessBinding = it.accessBinding
+                        )
+                    )
+                }
                 .distinctUntilChanged()
                 .collect { open(it) }
         }
@@ -315,7 +344,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * every network blip. Only a different endpoint or [freshThread] wipes it.
      */
     private fun open(target: Endpoint, freshThread: Boolean = false) {
-        val sameThread = !freshThread && target == endpoint
+        val sameThread = !freshThread && target.sameAccountAs(endpoint)
         endpoint = target
         session?.cancel()
         // Whatever was streaming is over: its socket is gone.
@@ -335,10 +364,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // No point dialling out to be turned away: say what is needed instead.
+        val credentials = target.credentials
+        if (credentials.isEmpty) {
+            _connection.value = Connection.SignInRequired(expired = false)
+            return
+        }
+        if (credentials.hasSession &&
+            AccessToken.parse(credentials.accessToken)?.isExpired(System.currentTimeMillis() / 1000) == true
+        ) {
+            _connection.value = Connection.SignInRequired(expired = true)
+            return
+        }
+
         session = viewModelScope.launch {
             var attempt = 0
             var backoff = INITIAL_RETRY_MS
             var lastError: String? = null
+            var rejected = false
 
             while (isActive && attempt < MAX_RETRIES) {
                 _connection.value = Connection.Connecting
@@ -347,10 +390,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     transport.connect(
                         workerUrl = target.workerUrl,
                         instanceId = instanceId,
-                        bearerToken = target.bearerToken,
-                        cfAccessClientId = target.cfAccessClientId,
-                        cfAccessClientSecret = target.cfAccessClientSecret
+                        credentials = credentials
                     ).collect { event ->
+                        if (event is AgentWebSocket.Event.AuthRejected) {
+                            rejected = true
+                            return@collect
+                        }
                         if (event is AgentWebSocket.Event.Open) {
                             attempt = 0
                             backoff = INITIAL_RETRY_MS
@@ -368,6 +413,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (!isActive) return@launch
                 // The socket dropped mid-stream; nothing more is coming for it.
                 finishStream()
+                if (rejected) {
+                    // A session that Access refuses has expired or been revoked;
+                    // a service token that it refuses is wrong. Either way the
+                    // next attempt would fail identically.
+                    _connection.value = Connection.SignInRequired(expired = credentials.hasSession)
+                    return@launch
+                }
                 attempt++
                 if (attempt >= MAX_RETRIES) break
                 delay(backoff)
@@ -434,7 +486,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             is AgentWebSocket.Event.ToolCall,
             is AgentWebSocket.Event.State,
-            is AgentWebSocket.Event.RpcResult -> Unit
+            is AgentWebSocket.Event.RpcResult,
+            // Handled by the retry loop in open(), before it reaches here.
+            is AgentWebSocket.Event.AuthRejected -> Unit
         }
     }
 

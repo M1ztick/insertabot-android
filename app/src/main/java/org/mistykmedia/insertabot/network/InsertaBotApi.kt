@@ -8,22 +8,22 @@ import org.json.JSONObject
 import org.mistykmedia.insertabot.data.WorkerHealth
 
 class InsertaBotApi(private val client: OkHttpClient = OkHttpClient()) {
-    suspend fun checkWorker(baseUrl: String, bearerToken: String, cfAccessClientId: String = "", cfAccessClientSecret: String = ""): WorkerHealth = withContext(Dispatchers.IO) {
+    suspend fun checkWorker(baseUrl: String, credentials: Credentials): WorkerHealth = withContext(Dispatchers.IO) {
         val normalized = baseUrl.trim().trimEnd('/')
         if (!normalized.startsWith("https://")) {
             return@withContext WorkerHealth(false, "Use an HTTPS Worker URL.")
         }
-        val request = Request.Builder()
-            .url("$normalized/health")
-            .apply {
-                if (bearerToken.isNotBlank()) header("Authorization", "Bearer $bearerToken")
-                if (cfAccessClientId.isNotBlank()) header("CF-Access-Client-Id", cfAccessClientId)
-                if (cfAccessClientSecret.isNotBlank()) header("CF-Access-Client-Secret", cfAccessClientSecret)
-            }
-            .build()
+        val request = credentials.applyTo(Request.Builder().url("$normalized/health")).build()
+        // Redirects are not followed: Access answers a missing or expired
+        // sign-in with a redirect to its login page, and following it would
+        // report that page's 200 as a healthy Worker.
+        val probe = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
         runCatching {
-            client.newCall(request).execute().use { response ->
+            probe.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""
+                if (Credentials.isAuthRejection(response.code)) {
+                    return@use WorkerHealth(false, "Reached the Worker, but sign-in was refused. Sign in again.")
+                }
                 if (!response.isSuccessful) return@use WorkerHealth(false, "Worker returned HTTP ${response.code}.")
                 val json = JSONObject(body)
                 WorkerHealth(

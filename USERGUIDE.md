@@ -8,7 +8,7 @@ Make sure you have the following installed and available:
 - Android SDK at `~/android-sdk/`
 - `cloudflared` installed (required for wrangler dev remote AI binding)
 - Node.js + npm
-- Access to `https://cfworker.insertabot.io` with your CF Access credentials
+- An email address allowed by the Cloudflare Access policy on `https://cfworker.insertabot.io`
 
 ---
 
@@ -70,20 +70,27 @@ To reinstall over an existing build:
 
 ---
 
-## 4. Configure the App in Settings
+## 4. Sign In
 
-1. Open the app on the emulator
-2. Authenticate with biometrics or device PIN when prompted
-3. Tap **Settings** in the bottom navigation
-4. Authenticate again (Settings re-prompts to protect credentials)
-5. Fill in:
-   - **Worker URL**: `https://cfworker.insertabot.io`
-   - **Bearer token**: your bearer token (if applicable)
-   - **CF Access Client ID**: your CF Access client ID
-   - **CF Access Client Secret**: your CF Access client secret
-   - **Model lane**: Auto, Research, or Coding
-6. Tap **Save settings**
-7. Tap **Check connection** — you should see `Connected to insertabot-cfworker · v0.2.0`
+1. Open the app. A fresh install points at `https://cfworker.insertabot.io` already.
+2. Tap **Sign in with email** (on the Chat screen, or under **Settings > Account**).
+3. Enter your email on the Cloudflare Access page. Access emails you a one-time code;
+   switch to your email app, copy it, come back, and enter it.
+4. The sign-in screen closes on its own and the chat connects. **Settings > Account**
+   shows who you are signed in as and when the session ends.
+
+The session lasts as long as the Access application's **session duration** (Zero
+Trust > Access > Applications > your app). When it ends, the app says so and offers
+**Sign in again**; if the team-domain session is still valid, that completes without
+a new code.
+
+**Developer options** (Settings > Advanced): a different Worker URL, a bearer token,
+or a CF Access service token. A service token is only sent when no email session
+exists, because the Worker maps the two to different accounts (an email vs. a
+service-token id) and so to different conversation lists. Link a token to an email
+with the Worker's `SERVICE_TOKEN_OWNERS` secret if you want them to share one.
+
+**Check connection** (under Advanced) should report `Connected to insertabot-cfworker`.
 
 ---
 
@@ -95,6 +102,12 @@ With bearer token:
 
 ```bash
 npx wscat -H "Authorization: Bearer <your-token>" -c "wss://cfworker.insertabot.io/agents/chat-agent/test-session"
+```
+
+With an email session (copy `CF_Authorization` from a browser signed in to the Worker):
+
+```bash
+npx wscat -H "cf-access-token: <token>" -c "wss://cfworker.insertabot.io/agents/chat-agent/test-session"
 ```
 
 With CF Access service token:

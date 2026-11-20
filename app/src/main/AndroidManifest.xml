@@ -11,8 +11,12 @@
         android:label="InsertaBot"
         android:supportsRtl="true"
         android:theme="@style/Theme.InsertaBot.Splash">
+        <!-- Compose redraws for these itself. Letting the system recreate the
+             activity instead reloaded the sign-in page on rotation, losing an
+             email or code already typed. -->
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
