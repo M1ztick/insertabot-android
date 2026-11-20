@@ -18,7 +18,11 @@ data class AppSettings(
     val bearerToken: String = "",
     val cfAccessClientId: String = "",
     val cfAccessClientSecret: String = "",
-    val modelLane: ModelLane = ModelLane.AUTO
+    val modelLane: ModelLane = ModelLane.AUTO,
+    /** Cloudflare Access session from the in-app email sign-in (a JWT). */
+    val accessToken: String = "",
+    /** CF_Binding cookie, when the Access app issues one with the session. */
+    val accessBinding: String = ""
 )
 
 data class McpServer(

@@ -65,11 +65,11 @@ wss://<worker>/agents/chat-agent/<instanceId>[?ib_key=<token>]
 **Caveats**
 
 - The deployed Worker pins `agents ^0.20.1` and `@cloudflare/ai-chat ^0.10.2`. Upstream `@cloudflare/ai-chat` has already renamed these frames (`chat-request`, `messages`, `cancel`, `tool-approval`), so a Worker dependency bump will require updating `AgentFrames`.
-- The Worker does not currently authenticate the WebSocket upgrade. The app sends the configured token both as `?ib_key=` (matching the PWA) and as an `Authorization: Bearer` header, and forwards the Cloudflare Access service headers, but nothing server-side reads the first two yet.
+- Authentication is Cloudflare Access in front of the Worker, which then verifies the Access JWT itself. The app signs in with email (one-time code) in a WebView, keeps the resulting `CF_Authorization` token, and sends it as `cf-access-token` on the upgrade. A service token (Settings > Advanced) is the fallback for development and is not sent while an email session exists. A bearer key, if set, still rides as `?ib_key=` and `Authorization: Bearer`, but the Worker does not read it.
 
 **Client behaviour**
 
-`ChatViewModel` opens the socket whenever a Worker URL is saved, reconnects with capped exponential backoff (5 attempts, 1s doubling to 30s), and surfaces `Connecting` / `Connected` / `Disconnected` to the chat screen. Replies stream token by token into a placeholder assistant message. The saved model lane is re-asserted over RPC on every connect, since agent state lives in the Durable Object and may have hibernated.
+`ChatViewModel` opens the socket whenever a Worker URL is saved, reconnects with capped exponential backoff (5 attempts, 1s doubling to 30s), and surfaces `Connecting` / `Connected` / `Disconnected` / `SignInRequired` to the chat screen. An Access refusal (401, 403 or a redirect to the login page) ends the retry loop straight away as `SignInRequired`, since retrying with the same token cannot succeed. Replies stream token by token into a placeholder assistant message. The saved model lane is re-asserted over RPC on every connect, since agent state lives in the Durable Object and may have hibernated.
 
 The instance id is generated once and stored in DataStore, so a conversation survives app restarts; **New chat** rotates it, which is a new Durable Object and a fresh thread.
 

@@ -95,6 +95,9 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
         data object Closed : Event
         data class Failure(val message: String) : Event
 
+        /** Cloudflare Access turned the connection away; [code] is its HTTP status. */
+        data class AuthRejected(val code: Int) : Event
+
         /** Server began a new assistant message for [requestId]. */
         data class StreamStart(val requestId: String, val messageId: String) : Event
         data class TextDelta(val requestId: String, val delta: String) : Event
@@ -129,22 +132,15 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
     fun connect(
         workerUrl: String,
         instanceId: String,
-        bearerToken: String = "",
-        cfAccessClientId: String = "",
-        cfAccessClientSecret: String = ""
+        credentials: Credentials
     ): Flow<Event> = callbackFlow {
         // Set once the collector has let go of this connection.
         val abandoned = AtomicBoolean(false)
-        val request = Request.Builder()
-            .url(agentUrl(workerUrl, instanceId, bearerToken))
-            .apply {
-                // The Worker does not yet authenticate the upgrade; the PWA passes
-                // its key as ?ib_key= (see agentUrl) and these headers cost nothing.
-                // Cloudflare Access, when enabled, does enforce the service headers.
-                if (bearerToken.isNotBlank()) header("Authorization", "Bearer $bearerToken")
-                if (cfAccessClientId.isNotBlank()) header("CF-Access-Client-Id", cfAccessClientId)
-                if (cfAccessClientSecret.isNotBlank()) header("CF-Access-Client-Secret", cfAccessClientSecret)
-            }
+        // Cloudflare Access authenticates the upgrade (session or service
+        // token, see Credentials); the Worker then verifies the JWT Access
+        // forwards. The bearer key also rides as ?ib_key= to match the PWA.
+        val request = credentials
+            .applyTo(Request.Builder().url(agentUrl(workerUrl, instanceId, credentials.bearerToken)))
             .build()
 
         val ws = client.newWebSocket(request, object : WebSocketListener() {
@@ -179,6 +175,14 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 release(webSocket, t.message ?: "WebSocket connection failed")
+                // Access refusing the upgrade (expired or missing sign-in) is
+                // not a network blip: retrying it just fails the same way.
+                val code = response?.code
+                if (code != null && Credentials.isAuthRejection(code)) {
+                    trySend(Event.AuthRejected(code))
+                    close()
+                    return
+                }
                 trySend(Event.Failure(t.message ?: "WebSocket connection failed"))
                 close(t)
             }

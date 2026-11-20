@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.mistykmedia.insertabot.BuildConfig
 import java.util.UUID
 
 private val Context.dataStore by preferencesDataStore(name = "insertabot_settings")
@@ -23,15 +24,21 @@ class AppPreferences(private val context: Context) {
         val cfAccessClientSecret = stringPreferencesKey("cf_access_client_secret")
         val modelLane = stringPreferencesKey("model_lane")
         val instanceId = stringPreferencesKey("agent_instance_id")
+        val accessToken = stringPreferencesKey("cf_access_session_token")
+        val accessBinding = stringPreferencesKey("cf_access_session_binding")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
-            workerUrl = prefs[Keys.workerUrl].orEmpty(),
+            // A blank URL means "use the default", so a first-run user never
+            // has to know or type one.
+            workerUrl = prefs[Keys.workerUrl]?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_WORKER_URL,
             bearerToken = prefs[Keys.bearerToken].orEmpty(),
             cfAccessClientId = prefs[Keys.cfAccessClientId].orEmpty(),
             cfAccessClientSecret = prefs[Keys.cfAccessClientSecret].orEmpty(),
-            modelLane = ModelLane.entries.firstOrNull { it.wireValue == prefs[Keys.modelLane] } ?: ModelLane.AUTO
+            modelLane = ModelLane.entries.firstOrNull { it.wireValue == prefs[Keys.modelLane] } ?: ModelLane.AUTO,
+            accessToken = prefs[Keys.accessToken].orEmpty(),
+            accessBinding = prefs[Keys.accessBinding].orEmpty()
         )
     }
 
@@ -58,13 +65,39 @@ class AppPreferences(private val context: Context) {
         return generated
     }
 
-    suspend fun save(settings: AppSettings) {
+    /**
+     * Saves the advanced connection fields only. The model lane and the
+     * sign-in session have their own writers, so a Settings form opened before
+     * a sign-in finished cannot overwrite the new session with a stale copy.
+     */
+    suspend fun saveConnection(settings: AppSettings) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.workerUrl] = settings.workerUrl.trim().trimEnd('/')
+            val url = settings.workerUrl.trim().trimEnd('/')
+            // Storing the default verbatim would pin it; blank keeps following it.
+            if (url.isBlank() || url == BuildConfig.DEFAULT_WORKER_URL) prefs.remove(Keys.workerUrl)
+            else prefs[Keys.workerUrl] = url
             prefs[Keys.bearerToken] = settings.bearerToken.trim()
             prefs[Keys.cfAccessClientId] = settings.cfAccessClientId.trim()
             prefs[Keys.cfAccessClientSecret] = settings.cfAccessClientSecret.trim()
-            prefs[Keys.modelLane] = settings.modelLane.wireValue
+        }
+    }
+
+    suspend fun saveModelLane(lane: ModelLane) {
+        context.dataStore.edit { prefs -> prefs[Keys.modelLane] = lane.wireValue }
+    }
+
+    suspend fun saveAccessSession(token: String, binding: String?) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.accessToken] = token.trim()
+            if (binding.isNullOrBlank()) prefs.remove(Keys.accessBinding)
+            else prefs[Keys.accessBinding] = binding.trim()
+        }
+    }
+
+    suspend fun clearAccessSession() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.accessToken)
+            prefs.remove(Keys.accessBinding)
         }
     }
 }
