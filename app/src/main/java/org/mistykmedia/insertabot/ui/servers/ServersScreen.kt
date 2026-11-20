@@ -1,6 +1,8 @@
 package org.mistykmedia.insertabot.ui.servers
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,22 +11,30 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,18 +44,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.mistykmedia.insertabot.data.McpPreset
+import org.mistykmedia.insertabot.data.McpPresets
 import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.ui.chat.ChatViewModel
 
@@ -57,65 +73,316 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
     val error by viewModel.serverError.collectAsStateWithLifecycle()
 
     val connected = connection is ChatViewModel.Connection.Connected
-    var name by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf<McpPreset?>(null) }
+    var showCustom by rememberSaveable { mutableStateOf(false) }
+    // Hosts already attached, so a preset can say "Added" instead of offering
+    // a second copy the agent would refuse anyway.
+    val attachedPresetIds = servers.mapNotNull { McpPresets.matching(it)?.id }.toSet()
 
-    val urlValid = url.isBlank() || url.startsWith("https://")
-
-    Column(
+    LazyColumn(
         Modifier
             .fillMaxSize()
             .padding(padding)
-            .imePadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .imePadding(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column {
-            Text("MCP servers", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "Tools the agent can call during a conversation.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        item {
+            Column {
+                Text(
+                    "Tools",
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.semantics { heading() }
+                )
+                Text(
+                    "Services the bot can use while it answers, like web search or GitHub.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (!connected) {
+            item {
+                Notice(
+                    if (connection is ChatViewModel.Connection.SignInRequired) {
+                        "Sign in on the Chat tab, then come back here to add tools."
+                    } else {
+                        "Waiting for the connection to the bot. Tools can be added once it's connected."
+                    }
+                )
+            }
+        }
+
+        // Shown here only while no dialog is open; the dialog shows its own.
+        if (adding == null && error != null) {
+            item { ErrorBanner(error.orEmpty()) }
+        }
+
+        item { SectionTitle("Your tools") }
+        if (servers.isEmpty()) {
+            item {
+                Text(
+                    if (connected) "None yet. Add one below." else "None yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            items(servers, key = { "attached:" + it.id.ifBlank { it.name } }) { server ->
+                ServerCard(
+                    server,
+                    enabled = !busy,
+                    onRemove = { viewModel.removeServer(server.id.ifBlank { server.name }) }
+                )
+            }
+        }
+
+        item { SectionTitle("Add a tool", Modifier.padding(top = 8.dp)) }
+        items(McpPresets.all, key = { "preset:" + it.id }) { preset ->
+            PresetCard(
+                preset = preset,
+                added = preset.id in attachedPresetIds,
+                enabled = connected && !busy,
+                onAdd = { adding = preset }
             )
         }
 
-        Box(Modifier.weight(1f)) {
-            when {
-                !connected -> Hint("Connect to the agent before attaching servers.")
-
-                servers.isEmpty() -> EmptyServers()
-
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(servers, key = { it.id.ifBlank { it.name } }) { server ->
-                        ServerCard(
-                            server,
-                            enabled = !busy,
-                            onRemove = { viewModel.removeServer(server.id.ifBlank { server.name }) }
-                        )
+        item {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(role = Role.Button) { showCustom = !showCustom },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Custom server",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .semantics { heading() }
+                )
+                Icon(
+                    if (showCustom) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (showCustom) "Hide custom server" else "Show custom server",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        item {
+            AnimatedVisibility(visible = showCustom) {
+                CustomServerForm(
+                    enabled = connected && !busy,
+                    busy = busy,
+                    onConnect = { name, url, token, onAccepted ->
+                        viewModel.addServer(name, url, token) { if (it) onAccepted() }
                     }
-                }
+                )
             }
         }
+    }
 
-        AnimatedVisibility(visible = error != null) {
-            error?.let {
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
+    adding?.let { preset ->
+        AddPresetDialog(
+            preset = preset,
+            busy = busy,
+            error = error,
+            onDismiss = { if (!busy) adding = null },
+            onConnect = { key ->
+                val (url, token) = preset.connection(key)
+                viewModel.addServer(preset.name, url, token) { accepted ->
+                    if (accepted) adding = null
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier.semantics { heading() }
+    )
+}
+
+@Composable
+private fun Notice(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ErrorBanner(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** One catalog entry: what it does, and a single button to add it. */
+@Composable
+private fun PresetCard(preset: McpPreset, added: Boolean, enabled: Boolean, onAdd: () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Row(
+            Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(preset.name, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    preset.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    if (preset.keyRequired) "Needs an API key" else "API key optional",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (added) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 ) {
-                    Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                    Icon(
+                        Icons.Outlined.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    Text("Added", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
                 }
+            } else {
+                FilledTonalButton(onClick = onAdd, enabled = enabled) { Text("Add") }
             }
         }
+    }
+}
 
+/**
+ * The only form a preset needs: one key, with a link to where it comes from.
+ * The address and how the key is sent are the preset's business, not the
+ * user's.
+ */
+@Composable
+private fun AddPresetDialog(
+    preset: McpPreset,
+    busy: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConnect: (String) -> Unit
+) {
+    val uriHandler = LocalUriHandler.current
+    var key by remember(preset.id) { mutableStateOf("") }
+    var revealed by remember(preset.id) { mutableStateOf(false) }
+    // The view model keeps the last error until the next call; only show one
+    // this dialog's own attempt produced.
+    var attempted by remember(preset.id) { mutableStateOf(false) }
+    val canConnect = !busy && (key.isNotBlank() || !preset.keyRequired)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add ${preset.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(preset.description, style = MaterialTheme.typography.bodyMedium)
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(if (preset.keyRequired) preset.keyLabel else "${preset.keyLabel} (optional)") },
+                    supportingText = { Text(preset.keyHelp) },
+                    singleLine = true,
+                    enabled = !busy,
+                    visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done
+                    ),
+                    trailingIcon = {
+                        IconButton(onClick = { revealed = !revealed }) {
+                            Icon(
+                                if (revealed) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = if (revealed) "Hide key" else "Show key"
+                            )
+                        }
+                    }
+                )
+                TextButton(onClick = { uriHandler.openUri(preset.getKeyUrl) }) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Text(if (preset.keyRequired) "Get a key" else "Get a key (optional)")
+                }
+                if (attempted && !busy && error != null) ErrorBanner(error)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { attempted = true; onConnect(key) },
+                enabled = canConnect
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Connect")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+        }
+    )
+}
+
+/** Anything not in the catalog: name, address and an optional Bearer token. */
+@Composable
+private fun CustomServerForm(
+    enabled: Boolean,
+    busy: Boolean,
+    onConnect: (name: String, url: String, token: String, onAccepted: () -> Unit) -> Unit
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var url by rememberSaveable { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    val urlValid = url.isBlank() || url.startsWith("https://")
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "For any other MCP server. If it takes its key in the URL " +
+                "(like ?apiKey=…), put it there and leave the token empty.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         OutlinedTextField(
             name, { name = it }, Modifier.fillMaxWidth(),
             label = { Text("Name") },
             singleLine = true,
-            enabled = connected && !busy,
+            enabled = enabled,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
         )
         OutlinedTextField(
@@ -126,7 +393,7 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
                 { Text("Must start with https://") }
             } else null,
             singleLine = true,
-            enabled = connected && !busy,
+            enabled = enabled,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Uri,
                 imeAction = ImeAction.Next
@@ -134,11 +401,9 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
         )
         OutlinedTextField(
             token, { token = it }, Modifier.fillMaxWidth(),
-            // The agent rejects a URL here — some servers take their key as a
-            // query parameter on the URL instead, and that mix-up is common.
             label = { Text("Access token (optional)") },
             singleLine = true,
-            enabled = connected && !busy,
+            enabled = enabled,
             // A server key is a credential like any other; it is not shown.
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
@@ -146,17 +411,13 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
                 imeAction = ImeAction.Done
             )
         )
-
         Button(
             onClick = {
-                // Keep the form when the agent refuses the server: the fields
-                // hold the URL and token the reader will retry, and retyping a
+                // Keep the form when the agent refuses the server: retyping a
                 // secret is the worst kind of input to lose.
-                viewModel.addServer(name.trim(), url.trim(), token.trim()) { accepted ->
-                    if (accepted) { name = ""; url = ""; token = "" }
-                }
+                onConnect(name.trim(), url.trim(), token.trim()) { name = ""; url = ""; token = "" }
             },
-            enabled = connected && !busy && name.isNotBlank() && url.startsWith("https://"),
+            enabled = enabled && name.isNotBlank() && url.startsWith("https://"),
             modifier = Modifier.fillMaxWidth()
         ) {
             if (busy) {
@@ -169,46 +430,13 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
 }
 
 @Composable
-private fun Hint(text: String) {
-    Text(
-        text,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.bodyMedium
-    )
-}
-
-@Composable
-private fun EmptyServers() {
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            Icons.Outlined.Dns,
-            contentDescription = null,
-            modifier = Modifier.size(40.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.size(12.dp))
-        Text("No servers attached", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.size(4.dp))
-        Text(
-            "Attach an MCP server below to give the agent extra tools.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
 private fun ServerCard(server: McpServer, enabled: Boolean, onRemove: () -> Unit) {
     val uriHandler = LocalUriHandler.current
+    val preset = McpPresets.matching(server)
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         )
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -217,7 +445,7 @@ private fun ServerCard(server: McpServer, enabled: Boolean, onRemove: () -> Unit
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     // A coloured dot reads as status at a glance, where the
                     // state word alone needs parsing on every card.
                     Box(
@@ -231,16 +459,19 @@ private fun ServerCard(server: McpServer, enabled: Boolean, onRemove: () -> Unit
                 TextButton(onClick = onRemove, enabled = enabled) { Text("Remove") }
             }
 
-            if (server.url.isNotBlank()) {
+            // A catalog server is described in words; anything else by its
+            // address, with any key in it masked.
+            val detail = preset?.description ?: McpPresets.redactUrl(server.url)
+            if (detail.isNotBlank()) {
                 Text(
-                    server.url,
+                    detail,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Text(
-                server.state.ifBlank { if (server.connected) "ready" else "unknown" },
+                statusLabel(server),
                 style = MaterialTheme.typography.labelMedium,
                 color = statusColor(server)
             )
@@ -259,6 +490,15 @@ private fun ServerCard(server: McpServer, enabled: Boolean, onRemove: () -> Unit
             }
         }
     }
+}
+
+/** The agent's connection state in words a non-developer reads at a glance. */
+private fun statusLabel(server: McpServer): String = when {
+    server.error != null || server.state == "failed" -> "Couldn't connect"
+    server.state == "authenticating" -> "Needs sign-in"
+    server.state == "connecting" || server.state == "discovering" -> "Connecting…"
+    server.connected || server.state == "ready" -> "Ready"
+    else -> server.state.ifBlank { "Unknown" }
 }
 
 @Composable
