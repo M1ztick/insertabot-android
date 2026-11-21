@@ -102,6 +102,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val busy = _busy.asStateFlow()
 
     /**
+     * What the agent is doing while it is not visibly writing: thinking, or
+     * using a named tool. Null when idle or while text is streaming.
+     */
+    private val activityTracker = TurnActivityTracker()
+    private val _activity = MutableStateFlow<TurnActivity?>(null)
+    val activity = _activity.asStateFlow()
+
+    private fun publishActivity() {
+        _activity.value = activityTracker.current
+    }
+
+    /**
      * A base64 data URI currently staged to be sent with the next message.
      * Cleared after a successful send so one image is tied to one turn.
      */
@@ -274,6 +286,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activeRequestId = requestId
         cancelledRequestId = null
         _busy.value = true
+        activityTracker.turnStarted()
+        publishActivity()
         return true
     }
 
@@ -454,12 +468,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is AgentWebSocket.Event.TextDelta -> {
                 if (streamingId == null) startStream(event.requestId)
                 appendToStream(event.delta)
+                activityTracker.text()
+                publishActivity()
             }
 
+            is AgentWebSocket.Event.Thinking -> {
+                activityTracker.reasoning()
+                publishActivity()
+            }
+
+            is AgentWebSocket.Event.ToolCall -> {
+                activityTracker.toolStarted(
+                    event.toolCallId.ifBlank { event.toolName },
+                    describeTool(event.toolName, _mcpServers.value)
+                )
+                publishActivity()
+            }
+
+            is AgentWebSocket.Event.ToolDone -> {
+                activityTracker.toolEnded(event.toolCallId)
+                publishActivity()
+            }
+
+            // A failed tool call is one step of the turn, not its end: the
+            // model is told about the failure and carries on (retries, tries
+            // another tool, or explains). Finishing the stream here dropped
+            // the composer out of busy while the reply was still coming, and
+            // the rest of it then landed in a second, separate bubble.
             is AgentWebSocket.Event.ToolFailed -> {
                 if (streamingId == null) startStream(event.requestId)
-                appendToStream("\n\n_[Tool ${event.toolName} failed: ${event.error}]_")
-                finishStream()
+                val label = describeTool(event.toolName, _mcpServers.value)
+                appendToStream("\n\n_[${label.text.removePrefix("Using ")} failed: ${event.error}]_\n\n")
+                activityTracker.toolEnded(event.toolCallId.ifBlank { event.toolName })
+                publishActivity()
             }
 
             is AgentWebSocket.Event.StreamError -> {
@@ -482,9 +523,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is AgentWebSocket.Event.StreamResuming -> {
                 _busy.value = true
                 startStream(event.requestId)
+                activityTracker.turnStarted()
+                publishActivity()
             }
 
-            is AgentWebSocket.Event.ToolCall,
             is AgentWebSocket.Event.State,
             is AgentWebSocket.Event.RpcResult,
             // Handled by the retry loop in open(), before it reaches here.
@@ -587,6 +629,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         pendingDelta.clear()
         activeRequestId = null
         _busy.value = false
+        activityTracker.turnEnded()
+        publishActivity()
     }
 
     /** The turn a frame belongs to; null for connection, state and RPC frames. */
@@ -594,6 +638,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         is AgentWebSocket.Event.StreamStart -> requestId
         is AgentWebSocket.Event.TextDelta -> requestId
         is AgentWebSocket.Event.ToolCall -> requestId
+        is AgentWebSocket.Event.ToolDone -> requestId
+        is AgentWebSocket.Event.Thinking -> requestId
         is AgentWebSocket.Event.ToolFailed -> requestId
         is AgentWebSocket.Event.StreamError -> requestId
         is AgentWebSocket.Event.StreamFinish -> requestId

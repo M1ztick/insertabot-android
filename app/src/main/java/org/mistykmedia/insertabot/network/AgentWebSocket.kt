@@ -101,8 +101,18 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
         /** Server began a new assistant message for [requestId]. */
         data class StreamStart(val requestId: String, val messageId: String) : Event
         data class TextDelta(val requestId: String, val delta: String) : Event
-        data class ToolCall(val requestId: String, val toolName: String) : Event
-        data class ToolFailed(val requestId: String, val toolName: String, val error: String) : Event
+        /** A tool call began. [toolCallId] pairs it with its [ToolDone] / [ToolFailed]. */
+        data class ToolCall(val requestId: String, val toolName: String, val toolCallId: String) : Event
+        data class ToolDone(val requestId: String, val toolCallId: String) : Event
+        data class ToolFailed(
+            val requestId: String,
+            val toolName: String,
+            val error: String,
+            val toolCallId: String = ""
+        ) : Event
+
+        /** The model is reasoning; DeepSeek streams this before (or between) text. */
+        data class Thinking(val requestId: String) : Event
         data class StreamError(val requestId: String, val error: String) : Event
         data class StreamFinish(val requestId: String) : Event
 
@@ -342,22 +352,27 @@ class AgentWebSocket(private val client: OkHttpClient = defaultClient()) {
                             else chunk.optString("textDelta")
                         if (delta.isNotEmpty()) events += Event.TextDelta(requestId, delta)
                     }
+                    // Start and input-available both arrive for one call; the
+                    // view model keys on toolCallId, so the repeat is harmless.
                     "tool-input-start", "tool-input-available", "tool-call" ->
-                        events += Event.ToolCall(requestId, chunk.toolName())
-                    "tool-output-error", "tool-error" ->
+                        events += Event.ToolCall(requestId, chunk.toolName(), chunk.optString("toolCallId"))
+                    "tool-output-available", "tool-result" ->
+                        events += Event.ToolDone(requestId, chunk.optString("toolCallId"))
+                    "tool-output-error", "tool-error", "tool-input-error" ->
                         events += Event.ToolFailed(
                             requestId,
                             chunk.toolName(),
                             chunk.optString("errorText").ifBlank { chunk.optString("error") }
-                                .ifBlank { "tool execution failed" }
+                                .ifBlank { "tool execution failed" },
+                            chunk.optString("toolCallId")
                         )
+                    "reasoning-start", "reasoning-delta" -> events += Event.Thinking(requestId)
                     "error" ->
                         events += Event.StreamError(
                             requestId,
                             chunk.optString("errorText").ifBlank { chunk.optString("error") }.ifBlank { "unknown" }
                         )
                     "finish" -> events += Event.StreamFinish(requestId)
-                    // "tool-output-available" / "tool-result" carry no user-visible text.
                 }
             }
         }
