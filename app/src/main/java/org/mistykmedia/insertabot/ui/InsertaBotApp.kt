@@ -19,7 +19,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Settings
 import kotlinx.coroutines.launch
 import org.mistykmedia.insertabot.data.AppPreferences
@@ -31,7 +31,7 @@ import org.mistykmedia.insertabot.ui.settings.SettingsScreen
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.Outlined.ChatBubbleOutline),
-    SERVERS("Servers", Icons.Outlined.Dns),
+    SERVERS("Tools", Icons.Outlined.Extension),
     SETTINGS("Settings", Icons.Outlined.Settings)
 }
 
