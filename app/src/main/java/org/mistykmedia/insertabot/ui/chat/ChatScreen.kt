@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
@@ -106,7 +107,8 @@ private val SUGGESTIONS = listOf(
 fun ChatScreen(
     padding: PaddingValues,
     viewModel: ChatViewModel = viewModel(),
-    onSignIn: () -> Unit = {}
+    onSignIn: () -> Unit = {},
+    onOpenHistory: () -> Unit = {}
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val connection by viewModel.connection.collectAsStateWithLifecycle()
@@ -172,7 +174,8 @@ fun ChatScreen(
         ChatHeader(
             messageCount = messages.size,
             busy = busy,
-            onNewChat = viewModel::newConversation
+            onNewChat = viewModel::newConversation,
+            onOpenHistory = onOpenHistory
         )
 
         // A reconnect usually finishes inside a second. Showing the banner for
@@ -283,15 +286,26 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ChatHeader(messageCount: Int, busy: Boolean, onNewChat: () -> Unit) {
+private fun ChatHeader(
+    messageCount: Int,
+    busy: Boolean,
+    onNewChat: () -> Unit,
+    onOpenHistory: () -> Unit
+) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("InsertaBot", style = MaterialTheme.typography.headlineMedium)
+        IconButton(onClick = onOpenHistory) {
+            Icon(Icons.Outlined.Menu, contentDescription = "Conversations")
+        }
+        Text(
+            "InsertaBot",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.weight(1f)
+        )
         // A reset is meaningless on an empty thread, and offering it there
         // invites a tap that appears to do nothing.
         if (messageCount > 0) {
