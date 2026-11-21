@@ -23,6 +23,9 @@ import org.mistykmedia.insertabot.data.ChatRole
 import org.mistykmedia.insertabot.data.ContentPart
 import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.data.AccessToken
+import org.mistykmedia.insertabot.data.ConversationSummary
+import org.mistykmedia.insertabot.network.ConversationsApi
+import org.mistykmedia.insertabot.network.ConversationsError
 import org.mistykmedia.insertabot.network.AgentWebSocket
 import org.mistykmedia.insertabot.network.Credentials
 import org.mistykmedia.insertabot.ui.JPEG_MEDIA_TYPE
@@ -112,6 +115,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun publishActivity() {
         _activity.value = activityTracker.current
     }
+
+    /**
+     * The conversation list, shared with the web app: both sign in with the
+     * same email, so the Worker files both clients' threads under one owner.
+     */
+    data class HistoryState(
+        val items: List<ConversationSummary> = emptyList(),
+        val nextCursor: String? = null,
+        val loading: Boolean = false,
+        /** At least one load has finished, so an empty [items] means "none yet". */
+        val loaded: Boolean = false,
+        val error: String? = null,
+        /** The Worker has no conversation index; the list is not offered. */
+        val unavailable: Boolean = false
+    )
+
+    private val conversationsApi = ConversationsApi()
+    private val _history = MutableStateFlow(HistoryState())
+    val history = _history.asStateFlow()
+    private var historyJob: Job? = null
+
+    /** The conversation the socket is pointed at, so the list can mark it. */
+    private val _conversationId = MutableStateFlow<String?>(null)
+    val conversationId = _conversationId.asStateFlow()
 
     /**
      * A base64 data URI currently staged to be sent with the next message.
@@ -339,13 +366,108 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Rotates the instance id, which is a new Durable Object and a new thread. */
     fun newConversation() {
+        viewModelScope.launch { startFreshConversation() }
+    }
+
+    private suspend fun startFreshConversation() {
+        _conversationId.value = prefs.resetInstanceId()
+        endpoint?.let { open(it, freshThread = true) } ?: run {
+            finishStream()
+            _messages.value = emptyList()
+            _pendingImage.value = null
+        }
+    }
+
+    /**
+     * Switch to an existing conversation, from this phone or the web. The
+     * agent sends its transcript (and reports its tools) once connected, so
+     * nothing is fetched here beyond pointing the socket at it.
+     */
+    fun openConversation(id: String) {
+        if (id == _conversationId.value) return
         viewModelScope.launch {
-            prefs.resetInstanceId()
-            endpoint?.let { open(it, freshThread = true) } ?: run {
-                finishStream()
-                _messages.value = emptyList()
-                _pendingImage.value = null
-            }
+            if (!prefs.setInstanceId(id)) return@launch
+            _conversationId.value = id
+            endpoint?.let { open(it, freshThread = true) }
+        }
+    }
+
+    /** Reload the list from the top. Called whenever the list is opened. */
+    fun refreshHistory() = loadHistory(cursor = null)
+
+    fun loadMoreHistory() {
+        val state = _history.value
+        if (!state.loading) state.nextCursor?.let { loadHistory(it) }
+    }
+
+    private fun loadHistory(cursor: String?) {
+        val target = endpoint
+        if (target == null || target.credentials.isEmpty) {
+            _history.value = HistoryState(loaded = true, error = "Sign in to see your conversations.")
+            return
+        }
+        historyJob?.cancel()
+        _history.value = _history.value.copy(loading = true, error = null)
+        historyJob = viewModelScope.launch {
+            conversationsApi.list(target.workerUrl, target.credentials, cursor)
+                .onSuccess { page ->
+                    val items = if (cursor == null) page.conversations
+                    else (_history.value.items + page.conversations).distinctBy { it.id }
+                    _history.value = HistoryState(items = items, nextCursor = page.nextCursor, loaded = true)
+                }
+                .onFailure { failure ->
+                    _history.value = _history.value.copy(
+                        loading = false,
+                        loaded = true,
+                        error = failure.message,
+                        unavailable = failure is ConversationsError.Unavailable
+                    )
+                }
+        }
+    }
+
+    /** Rename on the Worker, so the web app's list shows the new title too. */
+    fun renameConversation(id: String, title: String, onResult: (Boolean) -> Unit = {}) {
+        val target = endpoint ?: return onResult(false)
+        viewModelScope.launch {
+            conversationsApi.rename(target.workerUrl, target.credentials, id, title.trim())
+                .onSuccess { updated ->
+                    _history.value = _history.value.copy(
+                        items = _history.value.items.map { if (it.id == id) updated else it },
+                        error = null
+                    )
+                    onResult(true)
+                }
+                .onFailure { failure ->
+                    _history.value = _history.value.copy(error = failure.message)
+                    onResult(false)
+                }
+        }
+    }
+
+    /**
+     * Delete a conversation and its messages on the Worker, for every client.
+     * If it is the one open here, move to a fresh thread first: the socket
+     * should not be attached to a Durable Object that is being destroyed.
+     */
+    fun deleteConversation(id: String) {
+        val target = endpoint ?: return
+        viewModelScope.launch {
+            if (id == _conversationId.value) startFreshConversation()
+            conversationsApi.delete(target.workerUrl, target.credentials, id)
+                .onSuccess {
+                    _history.value = _history.value.copy(
+                        items = _history.value.items.filterNot { it.id == id },
+                        error = null
+                    )
+                }
+                .onFailure { failure ->
+                    if (failure is ConversationsError.NotFound) {
+                        _history.value = _history.value.copy(items = _history.value.items.filterNot { it.id == id })
+                    } else {
+                        _history.value = _history.value.copy(error = failure.message)
+                    }
+                }
         }
     }
 
@@ -401,6 +523,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _connection.value = Connection.Connecting
                 try {
                     val instanceId = prefs.ensureInstanceId()
+                    _conversationId.value = instanceId
                     transport.connect(
                         workerUrl = target.workerUrl,
                         instanceId = instanceId,
