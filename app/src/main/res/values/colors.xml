@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Matches the Material 3 dark primaryContainer the app renders with. -->
-    <color name="ic_launcher_background">#381E72</color>
+    <!-- Launcher icon ground. White, as the Mistyk Media mark is drawn on. -->
+    <color name="ic_launcher_background">#FFFFFF</color>
 
-    <!-- The darkest navy in the logo art, so the icon's faded edges have
-         nothing to sit against but their own background. -->
-    <color name="splash_background">#150C33</color>
+    <!-- Splash ground: the same as the window it hands over to (LightColors /
+         DarkColors background in Theme.kt), so cold start never changes colour.
+         values-night overrides both. -->
+    <color name="splash_background">#F5FAF8</color>
 
-    <!-- Matches LightColors.background in Theme.kt; values-night overrides it
-         with the dark ground. Set as windowBackground so the hand-off from the
-         splash screen does not flash a stock grey. -->
-    <color name="window_background">#FFF7FB</color>
+    <!-- Matches LightColors.background in Theme.kt. Set as windowBackground so
+         the hand-off from the splash screen does not flash a stock grey. -->
+    <color name="window_background">#F5FAF8</color>
 </resources>

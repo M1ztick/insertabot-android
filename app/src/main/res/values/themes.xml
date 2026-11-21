@@ -12,9 +12,10 @@
     </style>
 
     <!--
-        Cold start shows the robot on the art's own dark ground, then hands over
-        to Theme.InsertaBot. The launch theme is only ever on screen before the
-        first frame, so it carries no app styling of its own.
+        Cold start shows the Mistyk Media mark on the app's own background
+        (light or dark, per values-night), then hands over to Theme.InsertaBot
+        with no colour change. The launch theme is only ever on screen before
+        the first frame, so it carries no app styling of its own.
     -->
     <style name="Theme.InsertaBot.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_background</item>

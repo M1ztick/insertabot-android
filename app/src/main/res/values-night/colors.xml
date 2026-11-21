@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Matches DarkColors.background in Theme.kt. -->
-    <color name="window_background">#150C33</color>
+    <color name="window_background">#101414</color>
+    <color name="splash_background">#101414</color>
 </resources>
