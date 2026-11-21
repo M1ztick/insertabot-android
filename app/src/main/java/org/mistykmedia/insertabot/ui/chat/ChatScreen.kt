@@ -78,6 +78,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -108,6 +111,7 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val connection by viewModel.connection.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val activity by viewModel.activity.collectAsStateWithLifecycle()
     val pendingImage by viewModel.pendingImage.collectAsStateWithLifecycle()
     val canRetry by viewModel.canRetry.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
@@ -134,11 +138,17 @@ fun ChatScreen(
         snapshotFlow { listState.isScrollInProgress || listState.canScrollForward }
             .collect { awayFromBottom -> if (!awayFromBottom) following = true }
     }
+    // Between sending and the reply's first frame there is no assistant
+    // message yet; a placeholder stands in so the wait is visibly "working".
+    val pending = busy && messages.none { it.streaming }
+    val lastIndex = messages.lastIndex + if (pending) 1 else 0
+
     // A snap, not an animation: tokens arrive many times a second, and each
     // one cancelling and restarting an animated scroll is what made the whole
-    // screen shudder while a reply streamed in.
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text) {
-        if (messages.isNotEmpty() && following) listState.snapToEnd(messages.lastIndex)
+    // screen shudder while a reply streamed in. The activity line is keyed in
+    // too, so "Using …" appearing under the text is scrolled into view.
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text, pending, activity) {
+        if (lastIndex >= 0 && following) listState.snapToEnd(lastIndex)
     }
 
     val photoPicker = rememberLauncherForActivityResult(
@@ -203,11 +213,22 @@ fun ChatScreen(
                     MessageBubble(
                         message = message,
                         onCopy = { clipboard.setText(AnnotatedString(message.text)) },
+                        activity = if (message.streaming) activity else null,
                         // Placement animation belongs to the list, not the item:
                         // a new turn settles into position instead of appearing
                         // fully formed under the one above it.
                         modifier = Modifier.animateItem()
                     )
+                }
+                if (pending) {
+                    item(key = "pending-reply") {
+                        MessageBubble(
+                            message = PENDING_REPLY,
+                            onCopy = {},
+                            activity = activity ?: TurnActivity.Thinking,
+                            modifier = Modifier.animateItem()
+                        )
+                    }
                 }
             }
 
@@ -228,7 +249,7 @@ fun ChatScreen(
                     FilledIconButton(
                         onClick = {
                             following = true
-                            scope.launch { listState.snapToEnd(messages.lastIndex) }
+                            scope.launch { listState.snapToEnd(lastIndex) }
                         },
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -347,7 +368,8 @@ private fun EmptyState(
 private fun MessageBubble(
     message: ChatMessage,
     onCopy: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activity: TurnActivity? = null
 ) {
     val fromUser = message.role == ChatRole.USER
     var showActions by remember { mutableStateOf(false) }
@@ -386,7 +408,8 @@ private fun MessageBubble(
                 if (fromUser) RenderUserImages(message.contentParts)
 
                 when {
-                    message.text.isBlank() && message.streaming -> TypingIndicator()
+                    message.text.isBlank() && message.streaming ->
+                        ActivityLine(activity ?: TurnActivity.Thinking)
 
                     message.text.isBlank() -> Unit
 
@@ -396,6 +419,14 @@ private fun MessageBubble(
                         MarkdownText(message.text, content)
 
                     else -> Text(message.text, color = content)
+                }
+
+                // Text already on screen, and the agent has gone off to do
+                // something else (a tool, or reading a tool's result): say so
+                // under what it wrote, instead of leaving the bubble still.
+                if (message.streaming && message.text.isNotBlank() && activity != null) {
+                    Spacer(Modifier.size(8.dp))
+                    ActivityLine(activity)
                 }
             }
         }
@@ -413,6 +444,34 @@ private fun MessageBubble(
                 Text("Copy", style = MaterialTheme.typography.labelMedium)
             }
         }
+    }
+}
+
+/** Stand-in for the reply between sending a turn and its first frame. */
+private val PENDING_REPLY = ChatMessage(id = "pending-reply", role = ChatRole.ASSISTANT, text = "", streaming = true)
+
+/**
+ * Pulsing dots plus what the agent is doing, in words. Announced politely by
+ * screen readers, so a blind user hears "Using Tavily · search" too.
+ */
+@Composable
+private fun ActivityLine(activity: TurnActivity) {
+    val label = when (activity) {
+        TurnActivity.Thinking -> "Thinking…"
+        is TurnActivity.UsingTool ->
+            activity.label.text + (if (activity.others > 0) " (+${activity.others} more)" else "") + "…"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
+    ) {
+        TypingIndicator()
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
