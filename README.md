@@ -1,82 +1,49 @@
 # InsertaBot for Android
 
-A native Android companion app for [InsertaBot](https://github.com/M1ztick/insertabot-cfworker), built with Kotlin and Jetpack Compose.
+A native Android client for [InsertaBot](https://github.com/M1ztick/insertabot-cfworker), built with Kotlin and Jetpack Compose. It talks to an InsertaBot Cloudflare Worker: you chat, the Worker runs the model and any tools you attach.
 
-> Status: early. Chat runs end to end against a deployed Worker — the Cloudflare Agents WebSocket transport, streaming replies, and persistent conversation identity are in place. MCP server management is still stubbed.
+> **Pre-release.** The app is under active development and not yet published. See **[ROADMAP.md](ROADMAP.md)** for where things stand, what's next, and what testers should expect.
 
-## Goals
+## What it does
 
-- Native Android chat experience for the InsertaBot Cloudflare Worker
-- Manage remote MCP servers from the phone
-- Switch between research, coding, and automatic model lanes
-- Keep endpoint configuration and optional bearer token on-device
-- Remain compatible with F-Droid-style, reproducible Android builds
+- Chat with an InsertaBot Worker, with replies streaming in as they're written
+- Sign in with your email (a one-time code through Cloudflare Access); no tokens to paste
+- Add tools such as web search or GitHub with one tap and, at most, one API key
+- Show what the bot is doing while it works ("Thinking…", "Using Tavily · search…")
 
-## Requirements
+## Build and run
+
+Requirements:
 
 - JDK 17
-- Android SDK with API 35 installed
-- Android Studio Ladybug or newer recommended
-- An InsertaBot Worker deployment
-
-## Run
-
-1. Copy the Worker endpoint into **Settings** in the app, for example `https://your-worker.workers.dev`.
-2. Build and install a debug APK:
+- The Android SDK platform named by `compileSdk` in [`app/build.gradle.kts`](app/build.gradle.kts), and an Android Studio release that supports the project's Android Gradle Plugin version
 
 ```bash
 ./gradlew :app:assembleDebug
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-3. Use **Check connection** to request `/health` and `/info` from the Worker.
+A fresh install connects to the default Worker compiled in through `BuildConfig`, so there is nothing to configure: open the app and sign in. To use a different Worker, change the URL under **Settings > Advanced**.
 
-## Transport status
+Run the unit tests with:
 
-The Worker exposes a Cloudflare Agents `ChatAgent` through `routeAgentRequest`. That protocol is not a published spec, so it was captured from the Worker's own PWA client (`public/index.js` in `insertabot-cfworker`) and implemented in `AgentWebSocket`. Every frame name lives in the `AgentFrames` object in that one file.
-
-**Connection**
-
-```
-wss://<worker>/agents/chat-agent/<instanceId>[?ib_key=<token>]
+```bash
+./gradlew :app:testDebugUnitTest
 ```
 
-`routeAgentRequest` parses the path as `/{prefix}/{kebab-case-class}/{instance-name}`, so `ChatAgent` routes as `chat-agent`. `<instanceId>` is client-chosen and becomes the Durable Object name — it *is* the conversation identity, so persist it to resume a thread and rotate it to start a new one. Every frame in both directions is a JSON text frame with a `type` field.
+## How it fits together
 
-**Client to server**
-
-| type | payload |
-| --- | --- |
-| `cf_agent_use_chat_request` | `{id, init: {method: "POST", body}}` — `body` is a *string* holding `{"messages": UIMessage[], "trigger": "submit-message"}`. The full history is resent every turn; there is no delta form. |
-| `rpc` | `{id, method, args}` for the agent's `@callable()` methods: `setModelLane`, `addServer`, `removeServer`, `memoryAdd`, `memoryList`, `memorySearch`, `memoryDelete`. |
-
-**Server to client**
-
-| type | payload |
-| --- | --- |
-| `cf_agent_use_chat_response` | `{id, body, done}` — `body` is a JSON-encoded string holding one AI SDK stream part, so it is parsed a second time (`start`, `text-delta`, `tool-input-*`, `tool-output-*`, `finish`, `error`). |
-| `cf_agent_chat_messages` | `{messages}` — full history replace; the agent is authoritative. |
-| `cf_agent_state` | `{state}` — the agent's `ChatAgentState`, currently `{modelLane}`. |
-| `cf_agent_mcp_servers` | `{mcp: {servers, tools, prompts, resources}}` |
-| `rpc` | `{id, success, result}` or `{id, success: false, error}` |
-
-`GET /agents/chat-agent/<instanceId>/get-messages` returns the same history over plain HTTP.
-
-**Caveats**
-
-- The deployed Worker pins `agents ^0.20.1` and `@cloudflare/ai-chat ^0.10.2`. Upstream `@cloudflare/ai-chat` has already renamed these frames (`chat-request`, `messages`, `cancel`, `tool-approval`), so a Worker dependency bump will require updating `AgentFrames`.
-- Authentication is Cloudflare Access in front of the Worker, which then verifies the Access JWT itself. The app signs in with email (one-time code) in a WebView, keeps the resulting `CF_Authorization` token, and sends it as `cf-access-token` on the upgrade. A service token (Settings > Advanced) is the fallback for development and is not sent while an email session exists. A bearer key, if set, still rides as `?ib_key=` and `Authorization: Bearer`, but the Worker does not read it.
-
-**Client behaviour**
-
-`ChatViewModel` opens the socket whenever a Worker URL is saved, reconnects with capped exponential backoff (5 attempts, 1s doubling to 30s), and surfaces `Connecting` / `Connected` / `Disconnected` / `SignInRequired` to the chat screen. An Access refusal (401, 403 or a redirect to the login page) ends the retry loop straight away as `SignInRequired`, since retrying with the same token cannot succeed. Replies stream token by token into a placeholder assistant message. The saved model lane is re-asserted over RPC on every connect, since agent state lives in the Durable Object and may have hibernated.
-
-The instance id is generated once and stored in DataStore, so a conversation survives app restarts; **New chat** rotates it, which is a new Durable Object and a fresh thread.
-
-**Not done yet**
-
-- `ServersScreen` is still a stub. Inbound `cf_agent_mcp_servers` already decodes into `McpServer`, and `AgentWebSocket.callRpc` covers `addServer` / `removeServer`, but the screen is not wired to a session — that needs the view model hoisted so chat and servers share one connection.
+- **Transport:** `AgentWebSocket` speaks the Cloudflare Agents WebSocket protocol to the Worker's `ChatAgent`. The frames are documented in [docs/PROTOCOL.md](docs/PROTOCOL.md).
+- **Chat state:** `ChatViewModel` owns the connection, streaming and reconnects; `TurnActivityTracker` decides what the "Thinking… / Using …" line says.
+- **Sign-in:** `SignInScreen` runs the Cloudflare Access email login in a WebView; `Credentials` decides which auth headers each request carries.
+- **Tools:** MCP servers run **in the Worker, not on the phone**. The app attaches and removes them over RPC; `McpPresets` holds the one-tap catalog.
 
 ## F-Droid
 
-The `fdroid/` directory documents the eventual self-hosted repository layout. Do **not** commit release keys, keystores, generated APKs, API tokens, or Cloudflare credentials.
+The app is meant to ship through F-Droid: first a self-hosted repository for testers, later the main f-droid.org catalog. The `fdroid/` directory documents the planned repository layout. Never commit release keys, keystores, generated APKs, API tokens or Cloudflare credentials.
+
+## License
+
+Not chosen yet. Until a license file is added, all rights are reserved. A free-software license will be picked before the app is submitted to F-Droid; it's tracked in the [roadmap](ROADMAP.md).
+
+The InsertaBot name and the Mistyk Media logo belong to Mistyk Media and are not covered by any code license.
