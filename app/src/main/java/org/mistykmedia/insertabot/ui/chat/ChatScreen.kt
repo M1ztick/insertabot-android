@@ -315,7 +315,7 @@ private fun EmptyState(
         verticalArrangement = Arrangement.Center
     ) {
         Image(
-            painter = painterResource(R.drawable.insertabot_logo),
+            painter = painterResource(R.drawable.app_logo),
             contentDescription = null,
             contentScale = ContentScale.Fit,
             modifier = Modifier.heightIn(max = 200.dp)
