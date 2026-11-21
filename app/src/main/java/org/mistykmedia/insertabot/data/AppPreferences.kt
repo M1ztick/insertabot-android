@@ -12,11 +12,6 @@ import java.util.UUID
 private val Context.dataStore by preferencesDataStore(name = "insertabot_settings")
 
 class AppPreferences(private val context: Context) {
-    private companion object {
-        /** Canonical UUID — the shape `AgentWebSocket` puts in the request path. */
-        val INSTANCE_ID = Regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
-    }
-
     private object Keys {
         val workerUrl = stringPreferencesKey("worker_url")
         val bearerToken = stringPreferencesKey("bearer_token")
@@ -53,10 +48,21 @@ class AppPreferences(private val context: Context) {
             // persisted — regenerating it per connect would strand the thread
             // on a new Durable Object every time.
             val stored = prefs[Keys.instanceId]
-            if (stored == null || !INSTANCE_ID.matches(stored)) {
+            if (!ConversationIds.isValid(stored)) {
                 prefs[Keys.instanceId] = UUID.randomUUID().toString()
             }
         }[Keys.instanceId].orEmpty()
+
+    /**
+     * Point the app at an existing conversation — one picked from the history
+     * list, which may have been started on the web. Invalid ids are refused
+     * rather than stored, since a stored id is reused on every connect.
+     */
+    suspend fun setInstanceId(id: String): Boolean {
+        if (!ConversationIds.isValid(id)) return false
+        context.dataStore.edit { prefs -> prefs[Keys.instanceId] = id }
+        return true
+    }
 
     /** Rotates the instance id, which starts a fresh conversation on the Worker. */
     suspend fun resetInstanceId(): String {

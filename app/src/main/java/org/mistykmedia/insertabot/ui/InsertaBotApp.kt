@@ -1,6 +1,11 @@
 package org.mistykmedia.insertabot.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -26,6 +31,7 @@ import org.mistykmedia.insertabot.data.AppPreferences
 import org.mistykmedia.insertabot.ui.auth.SignInScreen
 import org.mistykmedia.insertabot.ui.chat.ChatScreen
 import org.mistykmedia.insertabot.ui.chat.ChatViewModel
+import org.mistykmedia.insertabot.ui.chat.ConversationDrawer
 import org.mistykmedia.insertabot.ui.servers.ServersScreen
 import org.mistykmedia.insertabot.ui.settings.SettingsScreen
 
@@ -75,6 +81,39 @@ fun InsertaBotApp() {
     }
 
     val startSignIn = { signingIn = true }
+
+    // The conversation list slides over the whole app (bottom bar included),
+    // but only the Chat tab opens it by swipe; elsewhere a swipe from the edge
+    // should stay the system's back gesture.
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val history by viewModel.history.collectAsStateWithLifecycle()
+    val currentId by viewModel.conversationId.collectAsStateWithLifecycle()
+    // Every time it opens: the list may have changed on the web since.
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Open) viewModel.refreshHistory()
+    }
+    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
+    val closeDrawerAndChat = {
+        destination = Destination.CHAT
+        scope.launch { drawerState.close() }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = destination == Destination.CHAT || drawerState.isOpen,
+        drawerContent = {
+            ConversationDrawer(
+                history = history,
+                currentId = currentId,
+                onNewChat = { viewModel.newConversation(); closeDrawerAndChat() },
+                onOpen = { id -> viewModel.openConversation(id); closeDrawerAndChat() },
+                onRename = viewModel::renameConversation,
+                onDelete = viewModel::deleteConversation,
+                onLoadMore = viewModel::loadMoreHistory,
+                onRetry = viewModel::refreshHistory
+            )
+        }
+    ) {
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -90,9 +129,15 @@ fun InsertaBotApp() {
         }
     ) { padding ->
         when (destination) {
-            Destination.CHAT -> ChatScreen(padding, viewModel, onSignIn = startSignIn)
+            Destination.CHAT -> ChatScreen(
+                padding,
+                viewModel,
+                onSignIn = startSignIn,
+                onOpenHistory = { scope.launch { drawerState.open() } }
+            )
             Destination.SERVERS -> ServersScreen(padding, viewModel)
             Destination.SETTINGS -> SettingsScreen(padding, onSignIn = startSignIn)
         }
+    }
     }
 }
