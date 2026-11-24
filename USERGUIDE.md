@@ -87,9 +87,11 @@ To reinstall over an existing build:
 
 ---
 
-## 5. Inspect the WebSocket Protocol (for AgentWebSocket implementation)
+## 5. Inspect the WebSocket Protocol (for debugging)
 
-To capture the live wire frames from the deployed Worker, use wscat in a separate terminal.
+The `AgentWebSocket.kt` transport is fully implemented (Cloudflare Agents protocol with
+`cf_agent_use_chat_request`, streaming, cancel, RPC, and MCP server frames). The wscat
+commands below are still useful for debugging the Worker directly.
 
 With bearer token:
 
@@ -103,7 +105,7 @@ With CF Access service token:
 npx wscat -H "CF-Access-Client-Id: <client-id>" -H "CF-Access-Client-Secret: <client-secret>" -c "wss://cfworker.insertabot.io/agents/chat-agent/test-session"
 ```
 
-Once connected, send a test message and observe the response frames. These frames define what `AgentWebSocket.kt` needs to serialize and deserialize.
+Once connected, send a test message and observe the response frames.
 
 ---
 
@@ -178,8 +180,42 @@ npx wscat -c "ws://localhost:8787/agents/chat-agent/test-session"
 
 ---
 
-## What's Not Done Yet
+## Current Implementation Status
 
-- `AgentWebSocket.kt` — wire protocol not yet implemented, pending frame capture from wscat
-- `ChatViewModel.kt` — currently returns a placeholder error; needs wiring to `AgentWebSocket`
-- `ServersScreen.kt` — MCP server list UI is a scaffold, needs wiring to `addServer`/`removeServer` RPC calls on the Worker
+### Done
+
+- **AgentWebSocket.kt** — Full Cloudflare Agents protocol: chat request/response, streaming
+  with batched token delivery, cancel, RPC calls, MCP server list sync, stream resume,
+  keepalive pings, and percent-encoded URL construction.
+- **ChatViewModel.kt** — Connection lifecycle with capped exponential backoff,
+  network-aware auto-reconnect, foreground detection, send/stop/retry/new-chat,
+  MCP server add/remove via RPC, image attachments.
+- **ServersScreen.kt** — MCP server list with status dots, auth URL links, error display,
+  add/remove form with token masking — all wired to the view model.
+- **ChatScreen.kt** — Message list with streaming Markdown rendering, code block copy,
+  image attachments, typing indicator, scroll-follow with manual override.
+- **SettingsScreen.kt** — Worker URL, credential fields (masked), model lane picker,
+  save and connection-probe with result banners.
+- **Markdown.kt** — Custom parser: headings, emphasis (bold/italic/strikethrough),
+  inline code, fenced blocks, blockquotes, rules, pipe tables. Streaming-safe:
+  unterminated delimiters render as typed rather than swallowing the message.
+- **ImageUtils.kt** — Gallery/camera image → base64 JPEG with EXIF correction,
+  downscaling to 1024px, and quality reduction to stay under 2 MB.
+- **Theme.kt** — Brand palette (magenta/violet/cyan on navy dark; light variant
+  for day mode) with Material You dynamic colour support on API 31+.
+
+### In Progress (on feature branches)
+
+- **Conversation drawer** — shared history between web and Android, with
+  rename, delete, and cursor-based paging (branch `privacy/delete-all`).
+- **Privacy controls** — "Delete all my conversations" with confirmation,
+  privacy-policy link in Settings (branch `privacy/delete-all`).
+- **Email sign-in via Cloudflare Access** — no tokens to paste
+  (branch `privacy/delete-all`).
+- **One-tap MCP presets** — preconfigured tool servers (branch `privacy/delete-all`).
+
+### Known Gaps
+
+- No network-layer integration tests yet; the existing tests cover Markdown parsing,
+  chat history truncation, Agent URL encoding, and image scaling edge cases.
+- ProGuard / R8 minification is not yet enabled on release builds.
