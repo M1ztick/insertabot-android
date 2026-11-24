@@ -26,7 +26,10 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -85,7 +89,11 @@ private fun AppSettings.connectionFields() =
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(padding: PaddingValues, onSignIn: () -> Unit = {}) {
+fun SettingsScreen(
+    padding: PaddingValues,
+    onSignIn: () -> Unit = {},
+    onDeleteAll: (onResult: (Result<Int>) -> Unit) -> Unit = {}
+) {
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
     val scope = rememberCoroutineScope()
@@ -179,6 +187,15 @@ fun SettingsScreen(padding: PaddingValues, onSignIn: () -> Unit = {}) {
                     )
                 }
             }
+        }
+
+        SectionTitle("Your data")
+        saved?.let { current ->
+            YourDataCard(
+                signedIn = current.accessToken.isNotBlank() ||
+                    (current.cfAccessClientId.isNotBlank() && current.cfAccessClientSecret.isNotBlank()),
+                onDeleteAll = onDeleteAll
+            )
         }
 
         // Developer settings. A tester who signs in above never needs these,
@@ -410,6 +427,107 @@ private fun AccountCard(
         }
     }
 }
+
+/**
+ * What is kept and the one control that removes it all. Conversations live on
+ * the Worker (that is what makes them sync with the web app), so deleting them
+ * here deletes them everywhere.
+ */
+@Composable
+private fun YourDataCard(
+    signedIn: Boolean,
+    onDeleteAll: (onResult: (Result<Int>) -> Unit) -> Unit
+) {
+    val uriHandler = LocalUriHandler.current
+    var confirming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var outcome by remember { mutableStateOf<ProbeResult?>(null) }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Your conversations are stored on the InsertaBot server so they sync between this " +
+                    "phone and the web. They aren't used to train AI, and this app has no ads or trackers.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(
+                onClick = { uriHandler.openUri(PRIVACY_URL) },
+                contentPadding = PaddingValues(horizontal = 0.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("What's stored, and for how long")
+            }
+            OutlinedButton(
+                onClick = { outcome = null; confirming = true },
+                enabled = signedIn && !deleting,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (deleting) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Deleting…")
+                } else {
+                    Text("Delete all my conversations")
+                }
+            }
+            if (!signedIn) {
+                Text(
+                    "Sign in to manage your conversations.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            AnimatedVisibility(visible = outcome != null) { outcome?.let { ResultBanner(it) } }
+        }
+    }
+
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text("Delete all conversations?") },
+            text = {
+                Text(
+                    "Every conversation, with its messages, saved notes and tools, will be deleted " +
+                        "from this phone and the web app. This can't be undone."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirming = false
+                        deleting = true
+                        onDeleteAll { result ->
+                            deleting = false
+                            outcome = result.fold(
+                                onSuccess = { n ->
+                                    ProbeResult.Ok(
+                                        if (n == 1) "Deleted 1 conversation." else "Deleted $n conversations."
+                                    )
+                                },
+                                onFailure = { ProbeResult.Failed(it.message ?: "Couldn't delete. Try again.") }
+                            )
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) { Text("Delete everything") }
+            },
+            dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+/** The Worker's plain-language privacy accounting. */
+private const val PRIVACY_URL = "https://github.com/M1ztick/insertabot-cfworker/blob/master/PRIVACY.md"
 
 /**
  * A credential field, masked by default.

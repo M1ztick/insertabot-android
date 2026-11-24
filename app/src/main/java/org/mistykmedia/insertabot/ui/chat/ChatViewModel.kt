@@ -426,6 +426,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * "Delete all my data": every conversation this account owns, on every
+     * device. Moves off the current thread first so the socket isn't attached
+     * to a Durable Object being destroyed. [onResult] gets how many went.
+     */
+    fun deleteAllConversations(onResult: (Result<Int>) -> Unit) {
+        val target = endpoint
+        if (target == null || target.credentials.isEmpty) {
+            onResult(Result.failure(ConversationsError.SignInRequired()))
+            return
+        }
+        viewModelScope.launch {
+            startFreshConversation()
+            val result = conversationsApi.deleteAll(target.workerUrl, target.credentials)
+            if (result.isSuccess) _history.value = HistoryState(loaded = true)
+            onResult(result)
+        }
+    }
+
     /** Rename on the Worker, so the web app's list shows the new title too. */
     fun renameConversation(id: String, title: String, onResult: (Boolean) -> Unit = {}) {
         val target = endpoint ?: return onResult(false)

@@ -49,4 +49,10 @@ class ConversationsTest {
         assertFalse(ConversationIds.isValid("owner~thread"))
         assertFalse(ConversationIds.isValid("x".repeat(129)))
     }
+
+    @Test
+    fun `parses the delete-all batch answer`() {
+        assertEquals(DeleteAllResult(deleted = 50, remaining = 6), parseDeleteAll("""{"deleted":50,"remaining":6}"""))
+        assertEquals(DeleteAllResult(0, 0), parseDeleteAll("{}"))
+    }
 }

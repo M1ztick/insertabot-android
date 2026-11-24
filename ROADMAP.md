@@ -24,6 +24,7 @@ The bar: someone who has never heard of MCP or Cloudflare can install the app, s
 - ✅ "Thinking…" / "Using Tavily · search…" while the bot works
 - ✅ Mistyk Media branding for the icon, splash screen and empty chat
 - ✅ Conversation list shared with the web app: switch between chats, rename and delete them
+- 🔄 Privacy: no conversation logging on the server, no Google or analytics on the web, "Delete all my conversations" in Settings (app side done; needs the Worker's privacy update deployed)
 - ⬜ Message actions: copy, retry and share a reply, and copy code blocks
 - ⬜ Keep tools attached when starting a new chat (today each chat has its own set)
 - ⬜ Accessibility pass: respect the system font size, label every icon, full-size tap targets

@@ -12,6 +12,7 @@ import org.mistykmedia.insertabot.data.ConversationPage
 import org.mistykmedia.insertabot.data.ConversationSummary
 import org.mistykmedia.insertabot.data.parseConversation
 import org.mistykmedia.insertabot.data.parseConversationPage
+import org.mistykmedia.insertabot.data.parseDeleteAll
 
 /** Why a conversations request failed, in terms the UI can act on. */
 sealed class ConversationsError(message: String) : Exception(message) {
@@ -22,6 +23,9 @@ sealed class ConversationsError(message: String) : Exception(message) {
     class Unavailable : ConversationsError("Conversation history isn't set up on this Worker.")
 
     class NotFound : ConversationsError("That conversation no longer exists.")
+
+    /** The Worker predates an endpoint the app is calling. */
+    class Unsupported : ConversationsError("The Worker doesn't support this yet. It needs updating.")
 
     class Failed(message: String) : ConversationsError(message)
 }
@@ -70,6 +74,25 @@ class ConversationsApi(client: OkHttpClient = OkHttpClient()) {
         execute(request) { }
     }
 
+    /**
+     * Delete every conversation this account owns, on every device: messages,
+     * saved notes and attached tools. The Worker works in batches and says how
+     * many remain, so this repeats until none do. Returns how many were deleted.
+     */
+    suspend fun deleteAll(workerUrl: String, credentials: Credentials): Result<Int> = call {
+        val url = collectionUrl(workerUrl).newBuilder().addQueryParameter("confirm", "all").build()
+        var total = 0
+        var rounds = 0
+        while (true) {
+            val result = execute(credentials.applyTo(Request.Builder().url(url).delete()).build(), ::parseDeleteAll)
+            total += result.deleted
+            // A batch that removed nothing but still reports a remainder would
+            // otherwise spin; the cap is a backstop, not an expected exit.
+            if (result.remaining <= 0 || result.deleted == 0 || ++rounds >= MAX_DELETE_ROUNDS) break
+        }
+        total
+    }
+
     private suspend fun <T> call(block: () -> T): Result<T> = withContext(Dispatchers.IO) {
         runCatching(block).recoverCatching { failure ->
             throw failure as? ConversationsError
@@ -84,6 +107,7 @@ class ConversationsApi(client: OkHttpClient = OkHttpClient()) {
                 Credentials.isAuthRejection(code) -> throw ConversationsError.SignInRequired()
                 code == 503 -> throw ConversationsError.Unavailable()
                 code == 404 -> throw ConversationsError.NotFound()
+                code == 405 -> throw ConversationsError.Unsupported()
                 !response.isSuccessful -> throw ConversationsError.Failed("The Worker returned HTTP $code.")
             }
             parse(response.body.string())
@@ -98,5 +122,8 @@ class ConversationsApi(client: OkHttpClient = OkHttpClient()) {
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /** 100 rounds of the Worker's 50 per batch is 5,000 conversations. */
+        const val MAX_DELETE_ROUNDS = 100
     }
 }
