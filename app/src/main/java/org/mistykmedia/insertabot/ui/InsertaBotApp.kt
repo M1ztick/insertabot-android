@@ -136,7 +136,11 @@ fun InsertaBotApp() {
                 onOpenHistory = { scope.launch { drawerState.open() } }
             )
             Destination.SERVERS -> ServersScreen(padding, viewModel)
-            Destination.SETTINGS -> SettingsScreen(padding, onSignIn = startSignIn)
+            Destination.SETTINGS -> SettingsScreen(
+                padding,
+                onSignIn = startSignIn,
+                onDeleteAll = viewModel::deleteAllConversations
+            )
         }
     }
     }

@@ -34,6 +34,10 @@ data class ConversationPage(
     val nextCursor: String? = null
 )
 
+/** Answer to `DELETE /api/conversations?confirm=all`; repeat while [remaining] > 0. */
+@Serializable
+data class DeleteAllResult(val deleted: Int = 0, val remaining: Int = 0)
+
 object ConversationIds {
     /**
      * The Worker's own rule (`CONVERSATION_ID_RE`). Both clients mint UUIDs,
@@ -55,3 +59,6 @@ internal fun parseConversationPage(body: String): ConversationPage =
 
 internal fun parseConversation(body: String): ConversationSummary =
     ConversationJson.decodeFromString(ConversationSummary.serializer(), body)
+
+internal fun parseDeleteAll(body: String): DeleteAllResult =
+    ConversationJson.decodeFromString(DeleteAllResult.serializer(), body)
