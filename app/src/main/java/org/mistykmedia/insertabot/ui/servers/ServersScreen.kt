@@ -71,6 +71,7 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
     val connection by viewModel.connection.collectAsStateWithLifecycle()
     val busy by viewModel.serverBusy.collectAsStateWithLifecycle()
     val error by viewModel.serverError.collectAsStateWithLifecycle()
+    val accountTools by viewModel.accountTools.collectAsStateWithLifecycle()
 
     val connected = connection is ChatViewModel.Connection.Connected
     var adding by remember { mutableStateOf<McpPreset?>(null) }
@@ -119,7 +120,20 @@ fun ServersScreen(padding: PaddingValues, viewModel: ChatViewModel = viewModel()
             item { ErrorBanner(error.orEmpty()) }
         }
 
-        item { SectionTitle("Your tools") }
+        item {
+            Column {
+                SectionTitle("Your tools")
+                Text(
+                    if (accountTools) {
+                        "Saved to your account: every conversation can use them, here and on the web."
+                    } else {
+                        "These belong to this conversation. A new chat starts without them."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         if (servers.isEmpty()) {
             item {
                 Text(

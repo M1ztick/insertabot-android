@@ -55,4 +55,18 @@ class ConversationsTest {
         assertEquals(DeleteAllResult(deleted = 50, remaining = 6), parseDeleteAll("""{"deleted":50,"remaining":6}"""))
         assertEquals(DeleteAllResult(0, 0), parseDeleteAll("{}"))
     }
+
+    @Test
+    fun `reads feature flags from the health body`() {
+        val body = """{"status":"ok","worker":"insertabot","features":{"conversations":true,"accountTools":true,"future":1}}"""
+        val features = parseWorkerFeatures(body)
+        assertTrue(features.conversations)
+        assertTrue(features.accountTools)
+    }
+
+    @Test
+    fun `an older Worker without flags reads as no features`() {
+        assertFalse(parseWorkerFeatures("""{"status":"ok"}""").accountTools)
+        assertFalse(parseWorkerFeatures("""{"status":"ok","features":{"conversations":true}}""").accountTools)
+    }
 }

@@ -5,7 +5,9 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import org.mistykmedia.insertabot.data.WorkerFeatures
 import org.mistykmedia.insertabot.data.WorkerHealth
+import org.mistykmedia.insertabot.data.parseWorkerFeatures
 
 class InsertaBotApi(private val client: OkHttpClient = OkHttpClient()) {
     suspend fun checkWorker(baseUrl: String, credentials: Credentials): WorkerHealth = withContext(Dispatchers.IO) {
@@ -33,5 +35,18 @@ class InsertaBotApi(private val client: OkHttpClient = OkHttpClient()) {
                 )
             }
         }.getOrElse { WorkerHealth(false, it.message ?: "Connection failed.") }
+    }
+
+    /** The Worker's feature flags, or null if it couldn't be asked. */
+    suspend fun features(baseUrl: String, credentials: Credentials): WorkerFeatures? = withContext(Dispatchers.IO) {
+        val url = baseUrl.trim().trimEnd('/')
+        if (!url.startsWith("https://")) return@withContext null
+        val request = credentials.applyTo(Request.Builder().url("$url/health")).build()
+        val probe = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+        runCatching {
+            probe.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) null else parseWorkerFeatures(response.body?.string().orEmpty())
+            }
+        }.getOrNull()
     }
 }
