@@ -94,9 +94,9 @@ with the Worker's `SERVICE_TOKEN_OWNERS` secret if you want them to share one.
 
 ---
 
-## 5. Inspect the WebSocket Protocol (for AgentWebSocket implementation)
+## 5. Inspect the WebSocket Protocol (for debugging)
 
-To capture the live wire frames from the deployed Worker, use wscat in a separate terminal.
+`AgentWebSocket.kt` implements the protocol in full (frame reference: [docs/PROTOCOL.md](docs/PROTOCOL.md)). To watch the live wire frames from the deployed Worker while debugging, use wscat in a separate terminal.
 
 With bearer token:
 
@@ -116,7 +116,7 @@ With CF Access service token:
 npx wscat -H "CF-Access-Client-Id: <client-id>" -H "CF-Access-Client-Secret: <client-secret>" -c "wss://cfworker.insertabot.io/agents/chat-agent/test-session"
 ```
 
-Once connected, send a test message and observe the response frames. These frames define what `AgentWebSocket.kt` needs to serialize and deserialize.
+Once connected, send a test message and observe the response frames.
 
 ---
 
@@ -191,8 +191,6 @@ npx wscat -c "ws://localhost:8787/agents/chat-agent/test-session"
 
 ---
 
-## What's Not Done Yet
+## What's done and what's next
 
-- `AgentWebSocket.kt` — wire protocol not yet implemented, pending frame capture from wscat
-- `ChatViewModel.kt` — currently returns a placeholder error; needs wiring to `AgentWebSocket`
-- `ServersScreen.kt` — MCP server list UI is a scaffold, needs wiring to `addServer`/`removeServer` RPC calls on the Worker
+See [ROADMAP.md](ROADMAP.md). It is the one place project status is kept, so this guide doesn't drift out of date.
