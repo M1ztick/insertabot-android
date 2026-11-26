@@ -49,6 +49,24 @@ object ConversationIds {
     fun isValid(id: String?): Boolean = id != null && VALID.matches(id)
 }
 
+/**
+ * What the Worker says it supports (`GET /health` → `features`). Each flag
+ * defaults to false, so an older Worker that doesn't send one reads as "no".
+ */
+@Serializable
+data class WorkerFeatures(
+    /** Conversation list shared with the web app (D1 configured). */
+    val conversations: Boolean = false,
+    /** Tools are saved to the account and attached to every conversation. */
+    val accountTools: Boolean = false
+)
+
+@Serializable
+private data class HealthBody(val features: WorkerFeatures = WorkerFeatures())
+
+internal fun parseWorkerFeatures(body: String): WorkerFeatures =
+    ConversationJson.decodeFromString(HealthBody.serializer(), body).features
+
 internal val ConversationJson = Json {
     ignoreUnknownKeys = true
     explicitNulls = false

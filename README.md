@@ -8,7 +8,7 @@ A native Android client for [InsertaBot](https://github.com/M1ztick/insertabot-c
 
 - Chat with an InsertaBot Worker, with replies streaming in as they're written
 - Sign in with your email (a one-time code through Cloudflare Access); no tokens to paste
-- Add tools such as web search or GitHub with one tap and, at most, one API key
+- Add tools such as web search or GitHub with one tap and, at most, one API key; they follow your account into every chat
 - Show what the bot is doing while it works ("Thinking…", "Using Tavily · search…")
 
 ## Build and run

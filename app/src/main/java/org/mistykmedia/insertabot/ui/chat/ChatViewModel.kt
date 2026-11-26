@@ -25,6 +25,7 @@ import org.mistykmedia.insertabot.data.McpServer
 import org.mistykmedia.insertabot.data.AccessToken
 import org.mistykmedia.insertabot.data.ConversationSummary
 import org.mistykmedia.insertabot.network.ConversationsApi
+import org.mistykmedia.insertabot.network.InsertaBotApi
 import org.mistykmedia.insertabot.network.ConversationsError
 import org.mistykmedia.insertabot.network.AgentWebSocket
 import org.mistykmedia.insertabot.network.Credentials
@@ -91,6 +92,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     private val _mcpServers = MutableStateFlow<List<McpServer>>(emptyList())
     val mcpServers = _mcpServers.asStateFlow()
+
+    /**
+     * True when the Worker keeps tools on the account, so one added here is
+     * attached to every conversation, on the web too. Read from `/health`
+     * each time the socket opens; false until then and on older Workers.
+     */
+    private val _accountTools = MutableStateFlow(false)
+    val accountTools = _accountTools.asStateFlow()
+    private val workerApi = InsertaBotApi()
 
     /** In flight while an addServer/removeServer RPC is outstanding. */
     private val _serverBusy = MutableStateFlow(false)
@@ -511,6 +521,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Servers belong to the agent we were talking to; a new endpoint
             // reports its own set once connected.
             _mcpServers.value = emptyList()
+            _accountTools.value = false
             _pendingImage.value = null
         }
 
@@ -590,6 +601,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         when (event) {
             is AgentWebSocket.Event.Open -> {
                 _connection.value = Connection.Connected
+                endpoint?.let { target ->
+                    viewModelScope.launch {
+                        workerApi.features(target.workerUrl, target.credentials)
+                            ?.let { _accountTools.value = it.accountTools }
+                    }
+                }
                 // Re-assert the saved lane: agent state lives in the Durable
                 // Object and may have hibernated or been reset. Launched, not
                 // awaited — this handler is the only reader of the socket's
